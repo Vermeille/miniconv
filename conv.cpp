@@ -236,8 +236,83 @@ class MaxPool : public Layer {
 };
 
 class MSE : public Layer {
-    virtual Volume& forward(const Volume& input) override {}
-    virtual Volume backward(const Volume& pgrad) override {}
+   public:
+    void set_target(const Volume& target) { target_ = &target; }
+
+    virtual Volume& forward(const Volume& input) override {
+        x_ = &input;
+        res_ = Volume(1, 1, 1);
+
+        res_[0] = ((*target_)[0] - input[0]) * ((*target_)[0] - input[0]) / 2;
+
+        return res_;
+    }
+
+    virtual Volume backward(const Volume& pgrad) override {
+        Volume grad = x_->from_shape();
+        grad[0] = pgrad[0] * ((*target_)[0] - (*x_)[0]);
+        return grad;
+    }
+
+   private:
+    const Volume* target_;
+    const Volume* x_;
+    Volume res_;
+};
+
+class Conv : public Layer {
+   public:
+    Conv(int f) : nb_f_(f) {}
+
+    virtual Volume& forward(const Volume& input) override {
+        if (filters_.empty()) {
+            for (int i = 0; i < nb_f_; ++i) {
+                filters_.emplace_back(3, 3, input.c());
+            }
+        }
+
+        res_ = Volume(input.w(), input.h(), filters_.size());
+        res_.zero();
+
+        for (int filter = 0; filter < filters_.size(); ++filter) {
+            for (int wptr = 0; wptr < filters_[0].sz(); ++wptr) {
+                auto& f = filters_[filter];
+                float weight = f[wptr];
+                int channel = wptr / (f.w() * f.h());
+                int hoffset = (wptr - f.cha_idx(channel)) / f.h() - f.h() / 2;
+                int woffset = (wptr - f.cha_idx(channel)) % f.w() - f.w() / 2;
+                int rptr = res_.cha_idx(filter) +
+                           std::max(0, -hoffset) * input.w() +
+                           std::max(0, -woffset);
+                int rdst = res_.cha_idx(channel) +
+                           std::max(0, hoffset) * input.w() +
+                           std::max(0, woffset);
+                for (int h = 0; h < input.h() - std::abs(hoffset); ++h) {
+                    for (int w = 0; w < input.w() - std::abs(woffset); ++w) {
+                        int ptr = rptr + w;
+                        int dstptr = rdst + w;
+
+                        res_[ptr] += weight * input[dstptr];
+                    }
+                    rptr += input.h();
+                    rdst += input.h();
+                }
+            }
+        }
+
+        return res_;
+    }
+
+    virtual Volume backward(const Volume& grad) override {
+        return Volume(1, 1, 1);
+    }
+
+    void set_filters(std::vector<Volume>&& fs) { filters_ = std::move(fs); }
+
+   private:
+    int nb_f_;
+    std::vector<Volume> filters_;
+    Volume res_;
 };
 
 int main() {
@@ -245,14 +320,43 @@ int main() {
 
     Volume v(6, 6, 2);
     for (int i = 0; i < v.sz(); ++i) {
-        v[i] = (1 + i) % 5;
+        v[i] = i;
     }
     v.show();
+
+    std::vector<Volume> filters;
+    Volume f(3, 3, 2);
+    f[0] = 0;
+    f[1] = 0;
+    f[2] = 0;
+    f[3] = 0;
+    f[4] = -1;
+    f[5] = 0;
+    f[6] = 0;
+    f[7] = 0;
+    f[8] = 0;
+
+    f[0 + 9] = 0;
+    f[1 + 9] = 0;
+    f[2 + 9] = 0;
+    f[3 + 9] = 0;
+    f[4 + 9] = 1;
+    f[5 + 9] = 0;
+    f[6 + 9] = 0;
+    f[7 + 9] = 0;
+    f[8 + 9] = 0;
+    Conv c(0);
+    filters.emplace_back(std::move(f));
+    c.set_filters(std::move(filters));
+    auto& v2 = c.forward(v);
+
+    /*
     MaxPool mp;
     auto& v2 = mp.forward(v);
     auto grad = mp.backward(v2);
-    v2.show();
     grad.show();
+    */
+    v2.show();
 
     return 0;
 }
