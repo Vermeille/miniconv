@@ -326,25 +326,16 @@ int main() {
 
     std::vector<Volume> filters;
     Volume f(3, 3, 2);
-    f[0] = 0;
-    f[1] = 0;
-    f[2] = 0;
-    f[3] = 0;
-    f[4] = -1;
-    f[5] = 0;
-    f[6] = 0;
-    f[7] = 0;
-    f[8] = 0;
+    // clang-format off
+    f[0] = 0; f[1] = 0; f[2] = 0;
+    f[3] = 0; f[4] = -1; f[5] = 0;
+    f[6] = 0; f[7] = 0; f[8] = 0;
 
-    f[0 + 9] = 0;
-    f[1 + 9] = 0;
-    f[2 + 9] = 0;
-    f[3 + 9] = 0;
-    f[4 + 9] = 1;
-    f[5 + 9] = 0;
-    f[6 + 9] = 0;
-    f[7 + 9] = 0;
-    f[8 + 9] = 0;
+    f[0 + 9] = 0; f[1 + 9] = 0; f[2 + 9] = 0;
+    f[3 + 9] = 0; f[4 + 9] = 1; f[5 + 9] = 0;
+    f[6 + 9] = 0; f[7 + 9] = 0; f[8 + 9] = 0;
+    // clang-format on
+
     Conv c(0);
     filters.emplace_back(std::move(f));
     c.set_filters(std::move(filters));
