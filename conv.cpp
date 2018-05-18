@@ -267,6 +267,7 @@ class Conv : public Layer {
     Conv(int f) : nb_f_(f) {}
 
     virtual Volume& forward(const Volume& input) override {
+        x_ = &input;
         if (filters_.empty()) {
             for (int i = 0; i < nb_f_; ++i) {
                 filters_.emplace_back(3, 3, input.c());
@@ -279,34 +280,78 @@ class Conv : public Layer {
         for (int filter = 0; filter < filters_.size(); ++filter) {
             for (int wptr = 0; wptr < filters_[0].sz(); ++wptr) {
                 auto& f = filters_[filter];
+
                 float weight = f[wptr];
+
                 int channel = wptr / (f.w() * f.h());
                 int hoffset = (wptr - f.cha_idx(channel)) / f.h() - f.h() / 2;
                 int woffset = (wptr - f.cha_idx(channel)) % f.w() - f.w() / 2;
-                int rptr = res_.cha_idx(filter) +
-                           std::max(0, -hoffset) * input.w() +
-                           std::max(0, -woffset);
-                int rdst = res_.cha_idx(channel) +
-                           std::max(0, hoffset) * input.w() +
-                           std::max(0, woffset);
+
+                int dst_row_ptr = res_.cha_idx(filter) +
+                                  std::max(0, -hoffset) * input.w() +
+                                  std::max(0, -woffset);
+                int src_row_ptr = res_.cha_idx(channel) +
+                                  std::max(0, hoffset) * input.w() +
+                                  std::max(0, woffset);
                 for (int h = 0; h < input.h() - std::abs(hoffset); ++h) {
                     for (int w = 0; w < input.w() - std::abs(woffset); ++w) {
-                        int ptr = rptr + w;
-                        int dstptr = rdst + w;
+                        int dst_ptr = dst_row_ptr + w;
+                        int src_ptr = src_row_ptr + w;
 
-                        res_[ptr] += weight * input[dstptr];
+                        res_[dst_ptr] += weight * input[src_ptr];
                     }
-                    rptr += input.h();
-                    rdst += input.h();
+                    dst_row_ptr += input.h();
+                    src_row_ptr += input.h();
                 }
+                // BIAS
             }
         }
 
         return res_;
     }
 
-    virtual Volume backward(const Volume& grad) override {
-        return Volume(1, 1, 1);
+    virtual Volume backward(const Volume& pgrad) override {
+        Volume dx = x_->from_shape();
+
+        for (int i = 0; i < nb_f_; ++i) {
+            if (dfilters_.empty()) {
+                dfilters_.emplace_back(3, 3, x_->c());
+            }
+            dfilters_[i].zero();
+        }
+
+        for (int filter = 0; filter < filters_.size(); ++filter) {
+            for (int wptr = 0; wptr < filters_[0].sz(); ++wptr) {
+                auto& f = filters_[filter];
+                auto& df = dfilters_[filter];
+
+                float weight = f[wptr];
+
+                int channel = wptr / (f.w() * f.h());
+                int hoffset = (wptr - f.cha_idx(channel)) / f.h() - f.h() / 2;
+                int woffset = (wptr - f.cha_idx(channel)) % f.w() - f.w() / 2;
+
+                int dst_row_ptr = res_.cha_idx(filter) +
+                                  std::max(0, -hoffset) * dx.w() +
+                                  std::max(0, -woffset);
+                int src_row_ptr = res_.cha_idx(channel) +
+                                  std::max(0, hoffset) * dx.w() +
+                                  std::max(0, woffset);
+                for (int h = 0; h < dx.h() - std::abs(hoffset); ++h) {
+                    for (int w = 0; w < dx.w() - std::abs(woffset); ++w) {
+                        int dst_ptr = dst_row_ptr + w;
+                        int src_ptr = src_row_ptr + w;
+
+                        dx[src_ptr] += pgrad[dst_ptr] * weight;
+                        df[wptr] += pgrad[dst_ptr] * (*x_)[src_ptr];
+                    }
+                    dst_row_ptr += dx.h();
+                    src_row_ptr += dx.h();
+                }
+                // BIAS
+            }
+        }
+        return dx;
     }
 
     void set_filters(std::vector<Volume>&& fs) { filters_ = std::move(fs); }
@@ -314,7 +359,9 @@ class Conv : public Layer {
    private:
     int nb_f_;
     std::vector<Volume> filters_;
+    std::vector<Volume> dfilters_;
     Volume res_;
+    const Volume* x_;
 };
 
 int main() {
