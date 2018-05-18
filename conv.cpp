@@ -294,11 +294,11 @@ class Conv : public Layer {
                 int woffset = (wptr - f.cha_idx(channel)) % f.w() - f.w() / 2;
 
                 int dst_row_ptr = res_.cha_idx(filter) +
+                                  std::max(0, hoffset) * res_.w() +
+                                  std::max(0, woffset);
+                int src_row_ptr = input.cha_idx(channel) +
                                   std::max(0, -hoffset) * input.w() +
                                   std::max(0, -woffset);
-                int src_row_ptr = res_.cha_idx(channel) +
-                                  std::max(0, hoffset) * input.w() +
-                                  std::max(0, woffset);
                 for (int h = 0; h < input.h() - std::abs(hoffset); ++h) {
                     for (int w = 0; w < input.w() - std::abs(woffset); ++w) {
                         int dst_ptr = dst_row_ptr + w;
@@ -306,8 +306,8 @@ class Conv : public Layer {
 
                         res_[dst_ptr] += weight * input[src_ptr];
                     }
-                    dst_row_ptr += input.h();
-                    src_row_ptr += input.h();
+                    dst_row_ptr += res_.w();
+                    src_row_ptr += input.w();
                 }
             }
         }
@@ -344,11 +344,11 @@ class Conv : public Layer {
                 int woffset = (wptr - f.cha_idx(channel)) % f.w() - f.w() / 2;
 
                 int dst_row_ptr = res_.cha_idx(filter) +
-                                  std::max(0, -hoffset) * dx.w() +
-                                  std::max(0, -woffset);
-                int src_row_ptr = res_.cha_idx(channel) +
                                   std::max(0, hoffset) * dx.w() +
                                   std::max(0, woffset);
+                int src_row_ptr = res_.cha_idx(channel) +
+                                  std::max(0, -hoffset) * dx.w() +
+                                  std::max(0, -woffset);
                 for (int h = 0; h < dx.h() - std::abs(hoffset); ++h) {
                     for (int w = 0; w < dx.w() - std::abs(woffset); ++w) {
                         int dst_ptr = dst_row_ptr + w;
@@ -357,8 +357,8 @@ class Conv : public Layer {
                         dx[src_ptr] += pgrad[dst_ptr] * weight;
                         df[wptr] += pgrad[dst_ptr] * (*x_)[src_ptr];
                     }
-                    dst_row_ptr += dx.h();
-                    src_row_ptr += dx.h();
+                    dst_row_ptr += dx.w();
+                    src_row_ptr += dx.w();
                 }
             }
         }
