@@ -98,7 +98,7 @@ class Volume {
     void show() const {
         std::cout << "[";
         for (int c = 0; c < c_; ++c) {
-            std::cout << "[";
+            std::cout << "[\n";
             for (int h = 0; h < h_; ++h) {
                 std::cout << "  [";
                 std::cout << res_[h_ * c * w_ + h * w_];
