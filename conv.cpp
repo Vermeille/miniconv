@@ -15,7 +15,7 @@ class Pool {
         Recyclable(const Recyclable&) = delete;
 
         ~Recyclable() {
-            if (from_) {
+            if (from_ && ptr_) {
                 from_->free(std::move(*this));
             }
         }
