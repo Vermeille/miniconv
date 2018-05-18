@@ -271,6 +271,7 @@ class Conv : public Layer {
         if (filters_.empty()) {
             for (int i = 0; i < nb_f_; ++i) {
                 filters_.emplace_back(3, 3, input.c());
+                biases_.push_back(0);
             }
         }
 
@@ -278,6 +279,11 @@ class Conv : public Layer {
         res_.zero();
 
         for (int filter = 0; filter < filters_.size(); ++filter) {
+            for (int i = res_.cha_idx(filter), end = res_.cha_idx(filter + 1);
+                 i < end;
+                 ++i) {
+                res_[i] = biases_[filter];
+            }
             for (int wptr = 0; wptr < filters_[0].sz(); ++wptr) {
                 auto& f = filters_[filter];
 
@@ -303,7 +309,6 @@ class Conv : public Layer {
                     dst_row_ptr += input.h();
                     src_row_ptr += input.h();
                 }
-                // BIAS
             }
         }
 
@@ -316,11 +321,18 @@ class Conv : public Layer {
         for (int i = 0; i < nb_f_; ++i) {
             if (dfilters_.empty()) {
                 dfilters_.emplace_back(3, 3, x_->c());
+                dbiases_.push_back(0);
             }
             dfilters_[i].zero();
+            dbiases_[i] = 0;
         }
 
         for (int filter = 0; filter < filters_.size(); ++filter) {
+            for (int i = pgrad.cha_idx(filter), end = pgrad.cha_idx(filter + 1);
+                 i < end;
+                 ++i) {
+                dbiases_[filter] += pgrad[i];
+            }
             for (int wptr = 0; wptr < filters_[0].sz(); ++wptr) {
                 auto& f = filters_[filter];
                 auto& df = dfilters_[filter];
@@ -348,18 +360,25 @@ class Conv : public Layer {
                     dst_row_ptr += dx.h();
                     src_row_ptr += dx.h();
                 }
-                // BIAS
             }
         }
         return dx;
     }
 
-    void set_filters(std::vector<Volume>&& fs) { filters_ = std::move(fs); }
+    void set_filters(std::vector<Volume>&& fs) {
+        filters_ = std::move(fs);
+        biases_.clear();
+        for (int i = 0; i < filters_.size(); ++i) {
+            biases_.push_back(0);
+        }
+    }
 
    private:
     int nb_f_;
     std::vector<Volume> filters_;
+    std::vector<float> biases_;
     std::vector<Volume> dfilters_;
+    std::vector<float> dbiases_;
     Volume res_;
     const Volume* x_;
 };
