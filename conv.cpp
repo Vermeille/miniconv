@@ -126,6 +126,7 @@ class Layer {
 };
 
 class Relu : public Layer {
+   public:
     virtual Volume& forward(const Volume& input) override {
         auto res = input.from_shape();
         for (int i = 0; i < input.sz(); ++i) {
@@ -144,6 +145,7 @@ class Relu : public Layer {
         return std::move(grad);
     }
 
+   private:
     Volume res_;
 };
 
