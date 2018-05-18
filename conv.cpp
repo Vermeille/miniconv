@@ -1,6 +1,8 @@
 #include <algorithm>
+#include <boost/python/numpy.hpp>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 template <class T>
@@ -416,6 +418,70 @@ int main() {
     grad.show();
     */
     v2.show();
+    grad.show();
+
+    return 0;
+}
+#endif
+
+namespace p = boost::python;
+namespace np = boost::python::numpy;
+
+Volume from_array(np::ndarray arr) {
+    if (arr.get_nd() != 3) {
+        throw std::runtime_error("volume doesn't have 3 dimensions");
+    }
+    auto as_f = arr.astype(np::dtype::get_builtin<float>());
+    Volume v(arr.shape(1), arr.shape(0), arr.shape(2));
+    const int channel_size = v.cha_idx(1);
+    const int img_size = v.w() * v.h();
+
+    for (int dst = 0, src = 0; dst < img_size; ++dst, src += arr.shape(2)) {
+        int channel_dst = dst;
+        for (int j = 0; j < arr.shape(2); ++j) {
+            float x = reinterpret_cast<float*>(as_f.get_data())[src + j];
+            v[channel_dst] = x;
+            channel_dst += channel_size;
+        }
+    }
+    return v;
+}
+
+np::ndarray to_array(const Volume& v) {
+    auto res = np::empty(p::make_tuple(v.h(), v.w(), v.c()),
+                         np::dtype::get_builtin<float>());
+    float* dat = reinterpret_cast<float*>(res.get_data());
+
+    int img_sz = v.w() * v.h();
+    for (int src = 0, dst = 0; src < img_sz; ++src, dst += v.c()) {
+        for (int c = 0, src_c = 0; c < v.c(); ++c, src_c += v.cha_idx(1)) {
+            dat[dst + c] = v[src + src_c];
+        }
+    }
+
+    return res;
+}
+
+BOOST_PYTHON_MODULE(miniconv) {
+    using namespace boost::python;
+    class_<Conv, boost::noncopyable>("Conv", init<int>())
+        .def("forward",
+             +[](Conv* conv, np::ndarray arr) {
+                 return to_array(conv->forward(from_array(arr)));
+             })
+        .def("set_kernels",
+             +[](Conv* conv, p::list kerns) {
+                 std::vector<Volume> ks;
+                 for (int i = 0; i < p::len(kerns); ++i) {
+                     ks.emplace_back(
+                         from_array(p::extract<np::ndarray>(kerns[i])));
+                 }
+                 conv->set_filters(std::move(ks));
+             })
+        .def("lol",
+             +[](Conv*, np::ndarray a) { return to_array(from_array(a)); });
+    np::initialize();
+}
 
     return 0;
 }
