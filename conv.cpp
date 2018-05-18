@@ -385,45 +385,6 @@ class Conv : public Layer {
     const Volume* x_;
 };
 
-int main() {
-    Pool<float[]> p;
-
-    Volume v(6, 6, 2);
-    for (int i = 0; i < v.sz(); ++i) {
-        v[i] = i;
-    }
-    v.show();
-
-    std::vector<Volume> filters;
-    Volume f(3, 3, 2);
-    // clang-format off
-    f[0] = 0; f[1] = 0; f[2] = 0;
-    f[3] = 0; f[4] = -1; f[5] = 0;
-    f[6] = 0; f[7] = 0; f[8] = 0;
-
-    f[0 + 9] = 0; f[1 + 9] = 0; f[2 + 9] = 0;
-    f[3 + 9] = 0; f[4 + 9] = 1; f[5 + 9] = 0;
-    f[6 + 9] = 0; f[7 + 9] = 0; f[8 + 9] = 0;
-    // clang-format on
-
-    Conv c(0);
-    filters.emplace_back(std::move(f));
-    c.set_filters(std::move(filters));
-    auto& v2 = c.forward(v);
-
-    /*
-    MaxPool mp;
-    auto& v2 = mp.forward(v);
-    auto grad = mp.backward(v2);
-    grad.show();
-    */
-    v2.show();
-    grad.show();
-
-    return 0;
-}
-#endif
-
 namespace p = boost::python;
 namespace np = boost::python::numpy;
 
@@ -481,7 +442,4 @@ BOOST_PYTHON_MODULE(miniconv) {
         .def("lol",
              +[](Conv*, np::ndarray a) { return to_array(from_array(a)); });
     np::initialize();
-}
-
-    return 0;
 }
