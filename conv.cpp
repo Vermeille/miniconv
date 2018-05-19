@@ -306,26 +306,35 @@ class MaxPool : public Layer {
 
 class MSE : public Layer {
    public:
-    void set_target(const Volume& target) { target_ = &target; }
+    void set_target(const Volume& target) { target.share_with(target_); }
 
     virtual Volume& forward(const Volume& input) override {
-        x_ = &input;
+        input.share_with(x_);
         res_ = Volume(1, 1, 1);
 
-        res_[0] = ((*target_)[0] - input[0]) * ((*target_)[0] - input[0]) / 2;
+        float total = 0;
+
+        for (int i = 0; i < input.sz(); ++i) {
+            float err = target_[i] - input[i];
+            total += err * err;
+        }
+
+        res_[0] /= 2 * input.sz();
 
         return res_;
     }
 
     virtual Volume backward(const Volume& pgrad) override {
-        Volume grad = x_->from_shape();
-        grad[0] = pgrad[0] * ((*target_)[0] - (*x_)[0]);
+        Volume grad = x_.from_shape();
+        for (int i = 0; i < grad.sz(); ++i) {
+            grad[i] = pgrad[i] * (target_[i] - x_[i]);
+        }
         return grad;
     }
 
    private:
-    const Volume* target_;
-    const Volume* x_;
+    Volume target_;
+    Volume x_;
     Volume res_;
 };
 
@@ -517,6 +526,19 @@ BOOST_PYTHON_MODULE(miniconv) {
                 res.append(to_array(vol));
             }
             return res;
+        });
+
+    class_<MSE, boost::noncopyable>("MSE")
+        .def("forward",
+             +[](MSE* mse, np::ndarray arr) {
+                 return to_array(mse->forward(from_array(arr)));
+             })
+        .def("backward",
+             +[](MSE* mse, np::ndarray arr) {
+                 return to_array(mse->backward(from_array(arr)));
+             })
+        .def("set_target", +[](MSE* mse, np::ndarray arr) {
+            return mse->set_target(from_array(arr));
         });
     np::initialize();
 }

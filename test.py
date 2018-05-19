@@ -435,9 +435,9 @@ def test_conv_back5():
 
 
 def test_conv_back_df1():
-    rand = np.random.rand(6, 6, 1)
+    rand = np.random.rand(12, 6, 1)
     ker = np.random.rand(5, 3, 1)
-    dout = np.random.rand(6, 6, 1)
+    dout = np.random.rand(*rand.shape)
 
     b = miniconv.Conv(1)
 
