@@ -179,6 +179,18 @@ class Volume {
         v.sz_ = sz_;
     }
 
+    void update_with(float lr, const Volume& o) {
+#if _GLIBCXX_DEBUG
+        if (sz_ != o.sz_) {
+            throw std::runtime_error(
+                "trying to update a matrix with a different size");
+        }
+#endif
+        for (int i = 0; i < sz_; ++i) {
+            res_[i] -= lr * o.res_[i];
+        }
+    }
+
    private:
     int w_;
     int h_;
@@ -190,6 +202,7 @@ class Volume {
 class Layer {
     virtual Volume& forward(const Volume&) = 0;
     virtual Volume backward(const Volume& grad) = 0;
+    virtual void update(float lr) = 0;
 };
 
 class Relu : public Layer {
@@ -212,18 +225,22 @@ class Relu : public Layer {
         return std::move(grad);
     }
 
+    virtual void update(float lr) override {}
+
    private:
     Volume res_;
 };
 
 class FullyConn : public Layer {
    public:
-    FullyConn(int w, int h, int c)
-        : w_(w, h, c), w_grad_(w, h, c), b_grad_(1, 1, 1) {}
-
     virtual Volume& forward(const Volume& input) override {
-        x_ = &input;
-        float sum = b_[0];
+        input.share_with(x_);
+
+        if (w_.sz() == 0) {
+            w_ = input.from_shape();
+        }
+
+        float sum = b_;
         for (int i = 0; i < input.sz(); ++i) {
             sum += input[i] * w_[i];
         }
@@ -234,9 +251,9 @@ class FullyConn : public Layer {
 
     virtual Volume backward(const Volume& pgrad) override {
         float d = pgrad[0];
-        b_grad_[0] = d;
+        b_grad_ = d;
         for (int i = 0; i < w_grad_.sz(); ++i) {
-            w_grad_[i] = d * (*x_)[i];
+            w_grad_[i] = d * x_[i];
         }
 
         Volume x_grad = w_grad_.from_shape();
@@ -247,13 +264,18 @@ class FullyConn : public Layer {
         return x_grad;
     }
 
+    virtual void update(float lr) override {
+        w_.update_with(lr, w_grad_);
+        b_ -= lr / b_grad_;
+    }
+
    private:
     Volume w_;
-    Volume b_;
+    float b_;
     Volume w_grad_;
-    Volume b_grad_;
+    float b_grad_;
     Volume res_;
-    const Volume* x_;
+    Volume x_;
 };
 
 class MaxPool : public Layer {
@@ -298,6 +320,8 @@ class MaxPool : public Layer {
         return grad;
     }
 
+    virtual void update(float lr) override {}
+
    private:
     const Volume* x_;
     std::unique_ptr<int[]> cache_;
@@ -331,6 +355,8 @@ class MSE : public Layer {
         }
         return grad;
     }
+
+    virtual void update(float lr) override {}
 
    private:
     Volume target_;
@@ -451,6 +477,15 @@ class Conv : public Layer {
     }
 
     const std::vector<Volume>& filters_grad() const { return dfilters_; }
+
+    virtual void update(float lr) override {
+        for (int i = 0; i < filters_.size(); ++i) {
+            filters_[i].update_with(lr, dfilters_[i]);
+        }
+        for (int i = 0; i < biases_.size(); ++i) {
+            biases_[i] -= lr * dbiases_[i];
+        }
+    }
 
    private:
     int nb_f_;
