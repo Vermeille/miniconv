@@ -21,7 +21,15 @@ class Pool {
         bool is_free() const { return owners_ == 0; }
 
         void add_owner() { ++owners_; }
-        void remove_owner() { --owners_; }
+        void remove_owner() {
+#if _GLIBCXX_DEBUG
+            if (owners_ == 0)
+                throw std::runtime_error(
+                    "trying to deown something that was said to have zero "
+                    "wner");
+#endif
+            --owners_;
+        }
 
         auto* get() { return x_.get(); }
         const auto* get() const { return x_.get(); }
@@ -41,7 +49,9 @@ class Pool {
         Recyclable() : alloc_(nullptr) {}
 
         Recyclable(const Recyclable& o) : alloc_(o.alloc_) {
-            alloc_->add_owner();
+            if (alloc_) {
+                alloc_->add_owner();
+            }
         }
 
         ~Recyclable() {
@@ -51,9 +61,6 @@ class Pool {
         }
 
         Recyclable& operator=(Recyclable&& o) {
-            if (alloc_) {
-                alloc_->remove_owner();
-            }
             alloc_ = o.alloc_;
             o.alloc_ = nullptr;
             return *this;
@@ -64,7 +71,9 @@ class Pool {
                 alloc_->remove_owner();
             }
             alloc_ = o.alloc_;
-            alloc_->add_owner();
+            if (alloc_) {
+                alloc_->add_owner();
+            }
             return *this;
         }
 
@@ -120,8 +129,22 @@ class Volume {
 
     Volume& operator=(Volume&& o) = default;
 
-    float& operator[](int i) { return res_[i]; }
-    float operator[](int i) const { return res_[i]; }
+    float& operator[](int i) {
+#if _GLIBCXX_DEBUG
+        if (i >= sz_) {
+            throw std::runtime_error("volume bound checks fail");
+        }
+#endif
+        return res_[i];
+    }
+    float operator[](int i) const {
+#if _GLIBCXX_DEBUG
+        if (i >= sz_) {
+            throw std::runtime_error("volume bound checks fail");
+        }
+#endif
+        return res_[i];
+    }
 
     int w() const { return w_; }
     int h() const { return h_; }
