@@ -555,13 +555,15 @@ BOOST_PYTHON_MODULE(miniconv) {
                  }
                  conv->set_filters(std::move(ks));
              })
-        .def("filters_grad", +[](Conv* conv) {
-            p::list res;
-            for (auto& vol : conv->filters_grad()) {
-                res.append(to_array(vol));
-            }
-            return res;
-        });
+        .def("filters_grad",
+             +[](Conv* conv) {
+                 p::list res;
+                 for (auto& vol : conv->filters_grad()) {
+                     res.append(to_array(vol));
+                 }
+                 return res;
+             })
+        .def("update", &Conv::update);
 
     class_<MSE, boost::noncopyable>("MSE")
         .def("forward",
@@ -572,8 +574,33 @@ BOOST_PYTHON_MODULE(miniconv) {
              +[](MSE* mse, np::ndarray arr) {
                  return to_array(mse->backward(from_array(arr)));
              })
-        .def("set_target", +[](MSE* mse, np::ndarray arr) {
-            return mse->set_target(from_array(arr));
-        });
+        .def("set_target",
+             +[](MSE* mse, np::ndarray arr) {
+                 return mse->set_target(from_array(arr));
+             })
+        .def("update", &MSE::update);
+
+    class_<Relu, boost::noncopyable>("Relu")
+        .def("forward",
+             +[](Relu* relu, np::ndarray arr) {
+                 return to_array(relu->forward(from_array(arr)));
+             })
+        .def("backward",
+             +[](Relu* relu, np::ndarray arr) {
+                 return to_array(relu->backward(from_array(arr)));
+             })
+        .def("update", &Relu::update);
+
+    class_<FullyConn, boost::noncopyable>("FullyConn")
+        .def("forward",
+             +[](FullyConn* relu, np::ndarray arr) {
+                 return to_array(relu->forward(from_array(arr)));
+             })
+        .def("backward",
+             +[](FullyConn* relu, np::ndarray arr) {
+                 return to_array(relu->backward(from_array(arr)));
+             })
+        .def("update", &FullyConn::update);
+
     np::initialize();
 }
