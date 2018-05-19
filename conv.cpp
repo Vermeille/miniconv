@@ -361,6 +361,7 @@ class Conv : public Layer {
 
     virtual Volume backward(const Volume& pgrad) override {
         Volume dx = x_.from_shape();
+        dx.zero();
 
         for (int i = 0; i < nb_f_; ++i) {
             if (dfilters_.empty()) {
@@ -388,11 +389,11 @@ class Conv : public Layer {
                 int woffset = (wptr - f.cha_idx(channel)) % f.w() - f.w() / 2;
 
                 int dst_row_ptr = res_.cha_idx(filter) +
-                                  std::max(0, hoffset) * dx.w() +
-                                  std::max(0, woffset);
-                int src_row_ptr = res_.cha_idx(channel) +
                                   std::max(0, -hoffset) * dx.w() +
                                   std::max(0, -woffset);
+                int src_row_ptr = res_.cha_idx(channel) +
+                                  std::max(0, hoffset) * dx.w() +
+                                  std::max(0, woffset);
                 for (int h = 0; h < dx.h() - std::abs(hoffset); ++h) {
                     for (int w = 0; w < dx.w() - std::abs(woffset); ++w) {
                         int dst_ptr = dst_row_ptr + w;
