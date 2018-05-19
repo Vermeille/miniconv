@@ -441,6 +441,8 @@ class Conv : public Layer {
         }
     }
 
+    const std::vector<Volume>& filters_grad() const { return dfilters_; }
+
    private:
     int nb_f_;
     std::vector<Volume> filters_;
@@ -496,7 +498,11 @@ BOOST_PYTHON_MODULE(miniconv) {
              +[](Conv* conv, np::ndarray arr) {
                  return to_array(conv->forward(from_array(arr)));
              })
-        .def("set_kernels",
+        .def("backward",
+             +[](Conv* conv, np::ndarray arr) {
+                 return to_array(conv->backward(from_array(arr)));
+             })
+        .def("set_filters",
              +[](Conv* conv, p::list kerns) {
                  std::vector<Volume> ks;
                  for (int i = 0; i < p::len(kerns); ++i) {
@@ -505,8 +511,12 @@ BOOST_PYTHON_MODULE(miniconv) {
                  }
                  conv->set_filters(std::move(ks));
              })
-        .def("backward", +[](Conv* conv, np::ndarray arr) {
-            return to_array(conv->backward(from_array(arr)));
+        .def("filters_grad", +[](Conv* conv) {
+            p::list res;
+            for (auto& vol : conv->filters_grad()) {
+                res.append(to_array(vol));
+            }
+            return res;
         });
     np::initialize();
 }
