@@ -357,7 +357,7 @@ class Conv : public Layer {
                 float weight = f[wptr];
 
                 int channel = wptr / (f.w() * f.h());
-                int hoffset = (wptr - f.cha_idx(channel)) / f.h() - f.h() / 2;
+                int hoffset = (wptr - f.cha_idx(channel)) / f.w() - f.h() / 2;
                 int woffset = (wptr - f.cha_idx(channel)) % f.w() - f.w() / 2;
 
                 int dst_row_ptr = res_.cha_idx(filter) +
@@ -388,7 +388,8 @@ class Conv : public Layer {
 
         for (int i = 0; i < nb_f_; ++i) {
             if (dfilters_.empty()) {
-                dfilters_.emplace_back(3, 3, x_.c());
+                dfilters_.emplace_back(
+                    filters_[i].w(), filters_[i].h(), filters_[i].c());
                 dbiases_.push_back(0);
             }
             dfilters_[i].zero();
@@ -401,29 +402,28 @@ class Conv : public Layer {
                  ++i) {
                 dbiases_[filter] += pgrad[i];
             }
+            auto& f = filters_[filter];
+            auto& df = dfilters_[filter];
             for (int wptr = 0; wptr < filters_[0].sz(); ++wptr) {
-                auto& f = filters_[filter];
-                auto& df = dfilters_[filter];
-
                 float weight = f[wptr];
 
                 int channel = wptr / (f.w() * f.h());
-                int hoffset = (wptr - f.cha_idx(channel)) / f.h() - f.h() / 2;
+                int hoffset = (wptr - f.cha_idx(channel)) / f.w() - f.h() / 2;
                 int woffset = (wptr - f.cha_idx(channel)) % f.w() - f.w() / 2;
 
                 int dst_row_ptr = res_.cha_idx(filter) +
+                                  std::max(0, hoffset) * res_.w() +
+                                  std::max(0, woffset);
+                int src_row_ptr = dx.cha_idx(channel) +
                                   std::max(0, -hoffset) * dx.w() +
                                   std::max(0, -woffset);
-                int src_row_ptr = res_.cha_idx(channel) +
-                                  std::max(0, hoffset) * dx.w() +
-                                  std::max(0, woffset);
                 for (int h = 0; h < dx.h() - std::abs(hoffset); ++h) {
                     for (int w = 0; w < dx.w() - std::abs(woffset); ++w) {
                         int dst_ptr = dst_row_ptr + w;
                         int src_ptr = src_row_ptr + w;
 
-                        dx[src_ptr] += pgrad[dst_ptr] * weight;
-                        df[wptr] += pgrad[dst_ptr] * x_[src_ptr];
+                        dx[dst_ptr] += pgrad[src_ptr] * weight;
+                        df[wptr] += pgrad[src_ptr] * x_[dst_ptr];
                     }
                     dst_row_ptr += dx.w();
                     src_row_ptr += dx.w();
