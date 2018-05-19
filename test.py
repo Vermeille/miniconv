@@ -239,6 +239,160 @@ def test_conv3d4():
         print(diff)
 
 
+def test_conv_back1():
+    rand = np.random.rand(6, 6, 1) * 10
+    eps = np.random.rand(6, 6, 1) / 1e-5
+
+    ker = np.array([[[0], [0], [0]], [[0], [1], [0]], [[0], [0], [0]]])
+
+    b = miniconv.Conv(1)
+    b.set_kernels([ker])
+
+    res2 = b.forward(rand+eps)
+    res1 = b.forward(rand-eps)
+
+    theirs = ((res2 - res1) /( 2* eps)).squeeze()
+    b.forward(rand)
+    mine = b.backward(np.ones((6,6,1))).squeeze()
+    diff = mine - theirs
+    ok = np.abs(diff).max() < 1e-7
+    if not ok:
+        print(mine.shape)
+        print(theirs.shape)
+        print(rand.squeeze())
+        print('theirs:')
+        print(theirs[:,:])
+        print('mine:')
+        print(mine.squeeze())
+        print('diff:')
+        print(diff)
+
+def test_conv_back2():
+    rand = np.random.rand(6, 6, 1) * 10
+    #rand = np.ones((6, 6, 1)) * 10
+
+    #ker = np.random.rand(3, 3, 1)
+    ker = np.array([[[0], [0], [0]], [[0], [1], [0]], [[0], [0], [0]]])
+
+    b = miniconv.Conv(1)
+    b.set_kernels([ker])
+
+    for i in range(6):
+        for j in range(6):
+            eps = np.zeros((6, 6, 1), dtype=float)
+            eps[i, j, 0] = 1
+            res1 = b.forward(rand + eps)
+            res2 = b.forward(rand - eps)
+
+            theirs = ((res1 - res2) / 2).squeeze()
+            b.forward(rand)
+            mine = b.backward(eps).squeeze()
+            diff = mine - theirs
+            ok = np.abs(diff).max() < 1e-6
+            if not ok:
+                print(mine.shape)
+                print(theirs.shape)
+                print(rand.squeeze())
+                print('theirs:')
+                print(theirs[:,:])
+                print('mine:')
+                print(mine.squeeze())
+                print('diff:')
+                print(diff)
+
+def test_conv_back3():
+    #rand = np.random.rand(6, 6, 1) * 10
+    rand = np.ones((6, 6, 1)) * 10
+
+    ker = np.random.rand(3, 3, 1)
+
+    b = miniconv.Conv(1)
+    b.set_kernels([ker])
+
+    for i in range(6):
+        for j in range(6):
+            eps = np.zeros((6, 6, 1), dtype=float)
+            eps[i, j, 0] = 1
+            res1 = b.forward(rand + eps)
+            res2 = b.forward(rand - eps)
+
+            theirs = ((res1 - res2) / 2).squeeze()
+            b.forward(rand)
+            mine = b.backward(eps).squeeze()
+            diff = mine - theirs
+            ok = np.abs(diff).max() < 1e-5
+            if not ok:
+                print(mine.shape)
+                print(theirs.shape)
+                print(rand.squeeze())
+                print('theirs:')
+                print(theirs[:,:])
+                print('mine:')
+                print(mine.squeeze())
+                print('diff:')
+                print(diff)
+
+def test_conv_back4():
+    rand = np.random.rand(6, 6, 1)
+
+    ker = np.random.rand(3, 3, 1)
+
+    b = miniconv.Conv(1)
+    b.set_kernels([ker])
+
+    for i in range(6):
+        for j in range(6):
+            eps = np.zeros((6, 6, 1), dtype=float)
+            eps[i, j, 0] = 1
+            res1 = b.forward(rand + eps)
+            res2 = b.forward(rand - eps)
+
+            theirs = ((res1 - res2) / 2).squeeze()
+            b.forward(rand)
+            mine = b.backward(eps).squeeze()
+            diff = mine - theirs
+            ok = np.abs(diff).max() < 1e-5
+            if not ok:
+                print(mine.shape)
+                print(theirs.shape)
+                print(rand.squeeze())
+                print('theirs:')
+                print(theirs[:,:])
+                print('mine:')
+                print(mine.squeeze())
+                print('diff:')
+                print(diff)
+
+def test_conv_back5():
+    rand = np.random.rand(6, 6, 1)
+
+    ker = np.random.rand(3, 3, 1)
+
+    b = miniconv.Conv(1)
+    b.set_kernels([ker])
+
+    eps = np.ones((6, 6, 1), dtype=float)
+    res1 = b.forward(rand + eps)
+    res2 = b.forward(rand - eps)
+
+    theirs = ((res1 - res2) / 2).squeeze()
+    b.forward(rand)
+    mine = b.backward(eps).squeeze()
+    diff = mine - theirs
+    ok = np.abs(diff).max() < 1e-5
+    if not ok:
+        print(mine.shape)
+        print(theirs.shape)
+        print(rand.squeeze())
+        print('theirs:')
+        print(theirs[:,:])
+        print('mine:')
+        print(mine.squeeze())
+        print('diff:')
+        print(diff)
+
+
+
 test_conv1()
 test_conv2()
 test_conv3()
@@ -247,3 +401,9 @@ test_conv3d1()
 test_conv3d2()
 test_conv3d3()
 test_conv3d4()
+
+test_conv_back1()
+test_conv_back2()
+test_conv_back3()
+test_conv_back4()
+test_conv_back5()

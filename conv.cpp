@@ -482,7 +482,8 @@ BOOST_PYTHON_MODULE(miniconv) {
                  }
                  conv->set_filters(std::move(ks));
              })
-        .def("lol",
-             +[](Conv*, np::ndarray a) { return to_array(from_array(a)); });
+        .def("backward", +[](Conv* conv, np::ndarray arr) {
+            return to_array(conv->backward(from_array(arr)));
+        });
     np::initialize();
 }
