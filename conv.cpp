@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <boost/python/numpy.hpp>
 #include <iostream>
+#include <list>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -8,63 +9,96 @@
 template <class T>
 class Pool {
    public:
+    class PoolAlloc {
+        std::unique_ptr<T> x_;
+        int sz_;
+        int owners_;
+
+       public:
+        PoolAlloc(std::unique_ptr<T>&& x, int sz)
+            : x_(std::move(x)), sz_(sz), owners_(0) {}
+
+        bool is_free() const { return owners_ == 0; }
+
+        void add_owner() { ++owners_; }
+        void remove_owner() { --owners_; }
+
+        auto* get() { return x_.get(); }
+        const auto* get() const { return x_.get(); }
+
+        int sz() const { return sz_; }
+    };
+
     class Recyclable {
        public:
-        Recyclable(std::unique_ptr<T>&& ptr, Pool* pool, int sz)
-            : ptr_(std::move(ptr)), from_(pool), sz_(sz) {}
-        Recyclable(Recyclable&&) = default;
-        Recyclable() = default;
-        Recyclable(const Recyclable&) = delete;
+        Recyclable(PoolAlloc* alloc) : alloc_(alloc) { alloc_->add_owner(); }
+
+        Recyclable(Recyclable&& o) {
+            alloc_ = o.alloc_;
+            o.alloc_ = nullptr;
+        }
+
+        Recyclable() : alloc_(nullptr) {}
+
+        Recyclable(const Recyclable& o) : alloc_(o.alloc_) {
+            alloc_->add_owner();
+        }
 
         ~Recyclable() {
-            if (from_ && ptr_) {
-                from_->free(std::move(*this));
+            if (alloc_) {
+                alloc_->remove_owner();
             }
         }
 
-        Recyclable& operator=(Recyclable&&) = default;
-
-        auto& operator*() { return *ptr_; }
-        const auto& operator*() const { return *ptr_; }
-
-        auto& operator-> () { return ptr_.operator->(); }
-        const auto& operator-> () const { return ptr_.operator->(); }
-
-        auto& operator[](int i) { return ptr_[i]; }
-        const auto& operator[](int i) const { return ptr_[i]; }
-
-        int sz() const { return sz_; }
-
-        void release_from_pool() { from_ = nullptr; }
-        void attach_to_pool(Pool* p) { from_ = p; }
-
-       private:
-        std::unique_ptr<T> ptr_;
-        Pool* from_;
-        int sz_;
-    };
-
-    void free(Recyclable&& ptr) {
-        ptr.release_from_pool();
-        pool_.emplace_back(std::move(ptr));
-    }
-
-    Recyclable alloc(int sz) {
-        auto found = std::find_if(
-            pool_.begin(), pool_.end(), [=](auto& r) { return r.sz() == sz; });
-
-        if (found != pool_.end()) {
-            auto handle = std::move(*found);
-            pool_.erase(found);
-            handle.attach_to_pool(this);
-            return std::move(handle);
+        Recyclable& operator=(Recyclable&& o) {
+            if (alloc_) {
+                alloc_->remove_owner();
+            }
+            alloc_ = o.alloc_;
+            o.alloc_ = nullptr;
+            return *this;
         }
 
-        return Recyclable(std::make_unique<T>(sz), this, sz);
+        Recyclable& operator=(const Recyclable& o) {
+            if (alloc_) {
+                alloc_->remove_owner();
+            }
+            alloc_ = o.alloc_;
+            alloc_->add_owner();
+            return *this;
+        }
+
+        auto& operator*() { return *alloc_->get(); }
+        const auto& operator*() const { return *alloc_->get(); }
+
+        auto& operator-> () { return alloc_->get().operator->(); }
+        const auto& operator-> () const { return alloc_->get().operator->(); }
+
+        auto& operator[](int i) { return alloc_->get()[i]; }
+        const auto& operator[](int i) const { return alloc_->get()[i]; }
+
+        int sz() const { return alloc_->sz_; }
+
+       private:
+        PoolAlloc* alloc_;
+    };
+
+    Recyclable alloc(int sz) {
+        auto found = std::find_if(pool_.begin(), pool_.end(), [=](auto& r) {
+            return r.sz() == sz && r.is_free();
+        });
+
+        if (found != pool_.end()) {
+            PoolAlloc* p = &*found;
+            return Recyclable(p);
+        }
+
+        pool_.emplace_back(std::make_unique<T>(sz), sz);
+        return Recyclable(&pool_.back());
     }
 
    private:
-    std::vector<Recyclable> pool_;
+    std::list<PoolAlloc> pool_;
 };
 
 static Pool<float[]> float_pool_;
@@ -112,6 +146,14 @@ class Volume {
             std::cout << "]";
         }
         std::cout << "]\n";
+    }
+
+    void share_with(Volume& v) const {
+        v.res_ = res_;
+        v.w_ = w_;
+        v.h_ = h_;
+        v.c_ = c_;
+        v.sz_ = sz_;
     }
 
    private:
@@ -269,7 +311,7 @@ class Conv : public Layer {
     Conv(int f) : nb_f_(f) {}
 
     virtual Volume& forward(const Volume& input) override {
-        x_ = &input;
+        input.share_with(x_);
         if (filters_.empty()) {
             for (int i = 0; i < nb_f_; ++i) {
                 filters_.emplace_back(3, 3, input.c());
@@ -318,11 +360,11 @@ class Conv : public Layer {
     }
 
     virtual Volume backward(const Volume& pgrad) override {
-        Volume dx = x_->from_shape();
+        Volume dx = x_.from_shape();
 
         for (int i = 0; i < nb_f_; ++i) {
             if (dfilters_.empty()) {
-                dfilters_.emplace_back(3, 3, x_->c());
+                dfilters_.emplace_back(3, 3, x_.c());
                 dbiases_.push_back(0);
             }
             dfilters_[i].zero();
@@ -357,7 +399,7 @@ class Conv : public Layer {
                         int src_ptr = src_row_ptr + w;
 
                         dx[src_ptr] += pgrad[dst_ptr] * weight;
-                        df[wptr] += pgrad[dst_ptr] * (*x_)[src_ptr];
+                        df[wptr] += pgrad[dst_ptr] * x_[src_ptr];
                     }
                     dst_row_ptr += dx.w();
                     src_row_ptr += dx.w();
@@ -382,7 +424,7 @@ class Conv : public Layer {
     std::vector<Volume> dfilters_;
     std::vector<float> dbiases_;
     Volume res_;
-    const Volume* x_;
+    Volume x_;
 };
 
 namespace p = boost::python;
