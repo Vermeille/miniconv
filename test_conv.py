@@ -24,7 +24,7 @@ def test_conv1():
     ker = np.array([[[0], [0], [0]], [[0], [1], [0]], [[0], [0], [0]]])
 
     b = miniconv.Conv(2)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     mine = b.forward(rand)
     theirs = conv(rand, ker)
@@ -51,7 +51,7 @@ def test_conv2():
     ker = np.array([[[0], [0], [0]], [[0], [0], [1]], [[0], [0], [0]]])
 
     b = miniconv.Conv(2)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     mine = b.forward(rand)
     theirs = conv(rand, ker)
@@ -78,7 +78,7 @@ def test_conv3():
     ker = np.random.rand(3, 5, 1)
 
     b = miniconv.Conv(2)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     mine = b.forward(rand)
     theirs = conv(rand, ker)
@@ -106,7 +106,7 @@ def test_conv4():
     ker2 = np.random.rand(3, 3, 1)
 
     b = miniconv.Conv(2)
-    b.set_filters([ker1, ker2])
+    b.set_filters([ker1, ker2], [0, 0])
 
     mine = b.forward(rand)
     theirs = conv(rand, [ker1, ker2]),
@@ -135,7 +135,7 @@ def test_conv3d1():
                                                         [0, 0, 0]]])
 
     b = miniconv.Conv(2)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     mine = b.forward(rand)
     theirs = conv(rand, ker)
@@ -165,7 +165,7 @@ def test_conv3d2():
                                                          [0, 0, -1]]])
 
     b = miniconv.Conv(2)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     mine = b.forward(rand)
     theirs = conv(rand, ker)
@@ -193,7 +193,7 @@ def test_conv3d3():
     ker = np.random.rand(3, 3, 3)
 
     b = miniconv.Conv(2)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     mine = b.forward(rand)
     theirs = conv(rand, ker)
@@ -222,7 +222,7 @@ def test_conv3d4():
     ker2 = np.random.rand(3, 3, 3)
 
     b = miniconv.Conv(2)
-    b.set_filters([ker1, ker2])
+    b.set_filters([ker1, ker2], [0, 0])
 
     mine = b.forward(rand)
     theirs = conv(rand, [ker1, ker2]),
@@ -274,7 +274,7 @@ def test_conv_back1():
     ker = np.array([[[0], [0], [0]], [[0], [1], [0]], [[0], [0], [0]]])
 
     b = miniconv.Conv(1)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     res2 = b.forward(rand + eps)
     res1 = b.forward(rand - eps)
@@ -305,7 +305,7 @@ def test_conv_back2():
     ker = np.array([[[0], [0], [0]], [[0], [1], [0]], [[0], [0], [0]]])
 
     b = miniconv.Conv(1)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     for i in range(6):
         for j in range(6):
@@ -340,7 +340,7 @@ def test_conv_back3():
     ker = np.random.rand(3, 3, 1)
 
     b = miniconv.Conv(1)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     for i in range(6):
         for j in range(6):
@@ -375,7 +375,7 @@ def test_conv_back4():
     ker = np.random.rand(3, 3, 1)
 
     b = miniconv.Conv(1)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     for i in range(6):
         for j in range(6):
@@ -408,7 +408,7 @@ def test_conv_back5():
     ker = np.random.rand(3, 3, 1)
 
     b = miniconv.Conv(1)
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
 
     eps = np.ones((6, 6, 1), dtype=float)
     res1 = b.forward(rand + eps)
@@ -439,7 +439,7 @@ def test_conv_back_df1():
 
     b = miniconv.Conv(1)
 
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
     b.forward(rand)
     b.backward(dout)
 
@@ -468,7 +468,7 @@ def test_conv_back_df2():
 
     b = miniconv.Conv(1)
 
-    b.set_filters([ker])
+    b.set_filters([ker], [0])
     b.forward(rand)
     b.backward(dout)
 
@@ -498,7 +498,7 @@ def test_conv_back_df3():
 
     b = miniconv.Conv(1)
 
-    b.set_filters([ker1, ker2])
+    b.set_filters([ker1, ker2], [0, 0])
     b.forward(rand)
     b.backward(dout)
 

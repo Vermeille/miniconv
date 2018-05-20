@@ -470,12 +470,12 @@ class Conv : public Layer {
         return dx;
     }
 
-    void set_filters(std::vector<Volume>&& fs) {
-        filters_ = std::move(fs);
-        biases_.clear();
-        for (int i = 0; i < filters_.size(); ++i) {
-            biases_.push_back(0);
+    void set_filters(std::vector<Volume>&& fs, std::vector<float>&& bs) {
+        if (fs.size() != bs.size()) {
+            throw std::runtime_error("filters and biases of a different size");
         }
+        filters_ = std::move(fs);
+        biases_ = std::move(bs);
     }
 
     const std::vector<Volume>& filters_grad() const { return dfilters_; }
@@ -549,13 +549,15 @@ BOOST_PYTHON_MODULE(miniconv) {
                  return to_array(conv->backward(from_array(arr)));
              })
         .def("set_filters",
-             +[](Conv* conv, p::list kerns) {
+             +[](Conv* conv, p::list kerns, p::list biases) {
                  std::vector<Volume> ks;
+                 std::vector<float> bs;
                  for (int i = 0; i < p::len(kerns); ++i) {
                      ks.emplace_back(
                          from_array(p::extract<np::ndarray>(kerns[i])));
+                     bs.push_back(p::extract<float>(biases[i]));
                  }
-                 conv->set_filters(std::move(ks));
+                 conv->set_filters(std::move(ks), std::move(bs));
              })
         .def("filters_grad",
              +[](Conv* conv) {
