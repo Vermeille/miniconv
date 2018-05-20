@@ -242,6 +242,7 @@ class FullyConn : public Layer {
 
         if (w_.sz() == 0) {
             w_ = input.from_shape();
+            b_ = 0;
         }
 
         float sum = b_;
@@ -255,9 +256,9 @@ class FullyConn : public Layer {
 
     virtual Volume backward(const Volume& pgrad) override {
         float d = pgrad[0];
-        b_grad_ = d;
+        b_grad_ += d;
         for (int i = 0; i < w_grad_.sz(); ++i) {
-            w_grad_[i] = d * x_[i];
+            w_grad_[i] += d * x_[i];
         }
 
         Volume x_grad = w_grad_.from_shape();
@@ -270,8 +271,24 @@ class FullyConn : public Layer {
 
     virtual void update(float lr) override {
         w_.update_with(lr, w_grad_);
-        b_ -= lr / b_grad_;
+        b_ -= lr * b_grad_;
+
+        w_grad_.zero();
+        b_grad_ = 0;
     }
+
+    void set_weights(Volume w, float b) {
+        w_ = std::move(w);
+        b_ = b;
+
+        w_grad_ = w_.from_shape();
+        w_grad_.zero();
+        b_grad_ = 0;
+    }
+
+    const Volume& grads() const { return w_grad_; }
+    float bias() const { return b_; }
+    const Volume& weights() const { return w_; }
 
    private:
     Volume w_;
@@ -343,11 +360,11 @@ class MSE : public Layer {
         float total = 0;
 
         for (int i = 0; i < input.sz(); ++i) {
-            float err = target_[i] - input[i];
+            float err = input[i] - target_[i];
             total += err * err;
         }
 
-        res_[0] /= 2 * input.sz();
+        res_[0] = total / (2 * input.sz());
 
         return res_;
     }
@@ -355,7 +372,7 @@ class MSE : public Layer {
     virtual Volume backward(const Volume& pgrad) override {
         Volume grad = x_.from_shape();
         for (int i = 0; i < grad.sz(); ++i) {
-            grad[i] = pgrad[i] * (target_[i] - x_[i]);
+            grad[i] = pgrad[0] * (x_[i] - target_[i]);
         }
         return grad;
     }
@@ -382,7 +399,6 @@ class Conv : public Layer {
         }
 
         res_ = Volume(input.w(), input.h(), filters_.size());
-        res_.zero();
 
         for (int filter = 0; filter < filters_.size(); ++filter) {
             for (int i = res_.cha_idx(filter), end = res_.cha_idx(filter + 1);
@@ -432,11 +448,6 @@ class Conv : public Layer {
                 dbiases_.push_back(0);
             }
         }
-        for (int i = 0; i < filters_.size(); ++i) {
-            dfilters_[i].zero();
-            dbiases_[i] = 0;
-        }
-
         for (int filter = 0; filter < filters_.size(); ++filter) {
             for (int i = pgrad.cha_idx(filter), end = pgrad.cha_idx(filter + 1);
                  i < end;
@@ -490,6 +501,11 @@ class Conv : public Layer {
         }
         for (int i = 0; i < biases_.size(); ++i) {
             biases_[i] -= lr * dbiases_[i];
+        }
+
+        for (int i = 0; i < filters_.size(); ++i) {
+            dfilters_[i].zero();
+            dbiases_[i] = 0;
         }
     }
 
@@ -605,9 +621,16 @@ BOOST_PYTHON_MODULE(miniconv) {
                  return to_array(relu->forward(from_array(arr)));
              })
         .def("backward",
-             +[](FullyConn* relu, np::ndarray arr) {
-                 return to_array(relu->backward(from_array(arr)));
+             +[](FullyConn* fc, np::ndarray arr) {
+                 return to_array(fc->backward(from_array(arr)));
              })
+        .def("set_weights",
+             +[](FullyConn* fc, np::ndarray weights, float b) {
+                 fc->set_weights(from_array(weights), b);
+             })
+        .def("grads", +[](FullyConn* fc) { return to_array(fc->grads()); })
+        .def("bias", +[](FullyConn* fc) { return fc->bias(); })
+        .def("weights", +[](FullyConn* fc) { return to_array(fc->weights()); })
         .def("update", &FullyConn::update);
 
     np::initialize();
