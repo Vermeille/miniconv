@@ -421,12 +421,14 @@ class Conv : public Layer {
         Volume dx = x_.from_shape();
         dx.zero();
 
-        for (int i = 0; i < nb_f_; ++i) {
-            if (dfilters_.empty()) {
+        if (dfilters_.empty()) {
+            for (int i = 0; i < filters_.size(); ++i) {
                 dfilters_.emplace_back(
                     filters_[i].w(), filters_[i].h(), filters_[i].c());
                 dbiases_.push_back(0);
             }
+        }
+        for (int i = 0; i < filters_.size(); ++i) {
             dfilters_[i].zero();
             dbiases_[i] = 0;
         }

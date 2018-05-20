@@ -259,8 +259,10 @@ def deconv(ximg, w, dout):
             for c in range(w.shape[2]):
                 for wy in range(w.shape[0]):
                     for wx in range(w.shape[1]):
-                        dw[wy, wx, c] += padded[img_y + wy, img_x + wx, c] * dout[y, x]
-                        pdx[img_y + wy, img_x + wx, c] += w[wy, wx, c] * dout[y, x]
+                        dw[wy, wx, c] += padded[img_y + wy, img_x + wx,
+                                                c] * dout[y, x]
+                        pdx[img_y + wy, img_x + wx, c] += w[wy, wx, c] * dout[
+                            y, x]
     dx = pdx[1:-1, 1:-1, :]
     return dw.squeeze(), dx.squeeze()
 
@@ -458,6 +460,7 @@ def test_conv_back_df1():
         print('diff:')
         print(diff)
 
+
 def test_conv_back_df2():
     rand = np.random.rand(12, 6, 4)
     ker = np.random.rand(5, 3, 4)
@@ -471,6 +474,39 @@ def test_conv_back_df2():
 
     mine = b.filters_grad()[0].squeeze()
     theirs = deconv(rand, ker, dout)[0]
+
+    diff = mine - theirs
+    ok = np.abs(diff).max() < 1e-5
+    if not ok:
+        print('test_conv_back_df2()')
+        print(mine.shape)
+        print(theirs.shape)
+        print(rand.squeeze())
+        print('theirs:')
+        print(theirs[:, :])
+        print('mine:')
+        print(mine.squeeze())
+        print('diff:')
+        print(diff)
+
+
+def test_conv_back_df3():
+    rand = np.random.rand(12, 6, 4)
+    ker1 = np.random.rand(5, 3, 4)
+    ker2 = np.random.rand(5, 3, 4)
+    dout = np.random.rand(12, 6, 2)
+
+    b = miniconv.Conv(1)
+
+    b.set_filters([ker1, ker2])
+    b.forward(rand)
+    b.backward(dout)
+
+    mine = np.array([b.filters_grad()])
+    theirs = np.array([
+        deconv(rand, ker1, dout[:, :, 0])[0],
+        deconv(rand, ker2, dout[:, :, 1])[0]
+    ])
 
     diff = mine - theirs
     ok = np.abs(diff).max() < 1e-5
@@ -504,3 +540,4 @@ test_conv_back5()
 
 test_conv_back_df1()
 test_conv_back_df2()
+test_conv_back_df3()
