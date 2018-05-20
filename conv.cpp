@@ -48,7 +48,8 @@ class Pool {
 
         Recyclable() : alloc_(nullptr) {}
 
-        Recyclable(const Recyclable& o) : alloc_(o.alloc_) {
+        Recyclable(const Recyclable& o) {
+            alloc_ = o.alloc_;
             if (alloc_) {
                 alloc_->add_owner();
             }
@@ -61,6 +62,9 @@ class Pool {
         }
 
         Recyclable& operator=(Recyclable&& o) {
+            if (alloc_) {
+                alloc_->remove_owner();
+            }
             alloc_ = o.alloc_;
             o.alloc_ = nullptr;
             return *this;
