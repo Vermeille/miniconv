@@ -6,6 +6,18 @@ import numpy as np
 np.random.seed(0)
 
 
+def conv(x, ker):
+    if type(ker) is not list:
+        ker = [ker]
+    res = []
+    for k in ker:
+        out = np.zeros((x.shape[0], x.shape[1]), dtype=float)
+        for i in range(k.shape[2]):
+            out += convolve(x[:, :, i], k[:, :, i], mode='constant')
+        res.append(out)
+    return np.dstack(res).squeeze()
+
+
 def test_conv1():
     rand = np.random.rand(6, 6, 1)
 
@@ -15,9 +27,9 @@ def test_conv1():
     b.set_filters([ker])
 
     mine = b.forward(rand)
-    theirs = convolve(rand, ker, mode='constant')
+    theirs = conv(rand, ker)
 
-    diff = theirs[:, :, 0] - mine.squeeze()
+    diff = theirs - mine.squeeze()
     ok = np.abs(diff).max() < 1e-7
     if not ok:
         print('test_conv1()')
@@ -42,9 +54,9 @@ def test_conv2():
     b.set_filters([ker])
 
     mine = b.forward(rand)
-    theirs = convolve(rand, ker, mode='constant')
+    theirs = conv(rand, ker)
 
-    diff = theirs[:, :, 0] - mine.squeeze()
+    diff = theirs - mine.squeeze()
     ok = np.abs(diff).max() < 1e-7
     if not ok:
         print('test_conv2()')
@@ -69,7 +81,7 @@ def test_conv3():
     b.set_filters([ker])
 
     mine = b.forward(rand)
-    theirs = convolve(rand, ker, mode='constant')
+    theirs = conv(rand, ker)
 
     diff = theirs.squeeze() - mine.squeeze()
     ok = np.abs(diff).max() < 1e-6
@@ -97,10 +109,7 @@ def test_conv4():
     b.set_filters([ker1, ker2])
 
     mine = b.forward(rand)
-    theirs = np.dstack([
-        convolve(rand, ker1, mode='constant'),
-        convolve(rand, ker2, mode='constant')
-    ])
+    theirs = conv(rand, [ker1, ker2]),
 
     diff = theirs - mine.squeeze()
     ok = np.abs(diff).max() < 1e-6
@@ -129,9 +138,7 @@ def test_conv3d1():
     b.set_filters([ker])
 
     mine = b.forward(rand)
-    theirs = convolve(rand[:, :, 0], ker[:, :, 0], mode='constant')
-    theirs += convolve(rand[:, :, 1], ker[:, :, 1], mode='constant')
-    theirs += convolve(rand[:, :, 2], ker[:, :, 2], mode='constant')
+    theirs = conv(rand, ker)
 
     diff = theirs - mine.squeeze()
     ok = np.abs(diff).max() < 1e-6
@@ -161,9 +168,7 @@ def test_conv3d2():
     b.set_filters([ker])
 
     mine = b.forward(rand)
-    theirs = convolve(rand[:, :, 0], ker[:, :, 0], mode='constant')
-    theirs += convolve(rand[:, :, 1], ker[:, :, 1], mode='constant')
-    theirs += convolve(rand[:, :, 2], ker[:, :, 2], mode='constant')
+    theirs = conv(rand, ker)
 
     diff = theirs - mine.squeeze()
     ok = np.abs(diff).max() < 1e-6
@@ -191,9 +196,7 @@ def test_conv3d3():
     b.set_filters([ker])
 
     mine = b.forward(rand)
-    theirs = convolve(rand[:, :, 0], ker[:, :, 0], mode='constant')
-    theirs += convolve(rand[:, :, 1], ker[:, :, 1], mode='constant')
-    theirs += convolve(rand[:, :, 2], ker[:, :, 2], mode='constant')
+    theirs = conv(rand, ker)
 
     diff = theirs - mine.squeeze()
     ok = np.abs(diff).max() < 1e-5
@@ -222,14 +225,7 @@ def test_conv3d4():
     b.set_filters([ker1, ker2])
 
     mine = b.forward(rand)
-    theirs = np.dstack([
-        convolve(rand[:, :, 0], ker1[:, :, 0], mode='constant') +
-        convolve(rand[:, :, 1], ker1[:, :, 1], mode='constant') +
-        convolve(rand[:, :, 2], ker1[:, :, 2], mode='constant'),
-        convolve(rand[:, :, 0], ker2[:, :, 0], mode='constant') + convolve(
-            rand[:, :, 1], ker2[:, :, 1], mode='constant') + convolve(
-                rand[:, :, 2], ker2[:, :, 2], mode='constant')
-    ])
+    theirs = conv(rand, [ker1, ker2]),
 
     diff = theirs - mine
     ok = np.abs(diff).max() < 1e-5
@@ -252,7 +248,7 @@ def deconv(ximg, w, dout):
     dw = np.zeros(w.shape)
     padded = np.pad(
         ximg, ((w.shape[0] // 2, w.shape[0] // 2),
-               (w.shape[1] // 2, w.shape[1] // 2)),
+               (w.shape[1] // 2, w.shape[1] // 2), (0, 0)),
         'constant',
         constant_values=0)
     pdx = np.zeros(padded.shape)
@@ -260,12 +256,13 @@ def deconv(ximg, w, dout):
         for x in range(ximg.shape[1]):
             img_y = y
             img_x = x
-            for wy in range(w.shape[0]):
-                for wx in range(w.shape[1]):
-                    dw[wy, wx] += padded[img_y + wy, img_x + wx] * dout[y, x]
-                    pdx[img_y + wy, img_x + wx] += w[wy, wx] * dout[y, x]
-    dx = pdx[1:-1, 1:-1]
-    return dw, dx
+            for c in range(w.shape[2]):
+                for wy in range(w.shape[0]):
+                    for wx in range(w.shape[1]):
+                        dw[wy, wx, c] += padded[img_y + wy, img_x + wx, c] * dout[y, x]
+                        pdx[img_y + wy, img_x + wx, c] += w[wy, wx, c] * dout[y, x]
+    dx = pdx[1:-1, 1:-1, :]
+    return dw.squeeze(), dx.squeeze()
 
 
 def test_conv_back1():
@@ -350,8 +347,7 @@ def test_conv_back3():
             res1 = b.forward(rand + eps)
             res2 = b.forward(rand - eps)
 
-            theirs = deconv(
-                rand.reshape(6, 6), ker.reshape(3, 3), dout.reshape(6, 6))[1]
+            theirs = deconv(rand, ker, dout)[1]
 
             b.forward(rand)
             mine = b.backward(dout.reshape(6, 6, 1)).squeeze()
@@ -446,12 +442,40 @@ def test_conv_back_df1():
     b.backward(dout)
 
     mine = b.filters_grad()[0].squeeze()
-    theirs = deconv(rand.squeeze(), ker.squeeze(), dout.squeeze())[0]
+    theirs = deconv(rand, ker, dout)[0]
 
     diff = mine - theirs
     ok = np.abs(diff).max() < 1e-5
     if not ok:
         print('test_conv_back_df1()')
+        print(mine.shape)
+        print(theirs.shape)
+        print(rand.squeeze())
+        print('theirs:')
+        print(theirs[:, :])
+        print('mine:')
+        print(mine.squeeze())
+        print('diff:')
+        print(diff)
+
+def test_conv_back_df2():
+    rand = np.random.rand(12, 6, 4)
+    ker = np.random.rand(5, 3, 4)
+    dout = np.random.rand(12, 6, 1)
+
+    b = miniconv.Conv(1)
+
+    b.set_filters([ker])
+    b.forward(rand)
+    b.backward(dout)
+
+    mine = b.filters_grad()[0].squeeze()
+    theirs = deconv(rand, ker, dout)[0]
+
+    diff = mine - theirs
+    ok = np.abs(diff).max() < 1e-5
+    if not ok:
+        print('test_conv_back_df2()')
         print(mine.shape)
         print(theirs.shape)
         print(rand.squeeze())
@@ -477,4 +501,6 @@ test_conv_back2()
 test_conv_back3()
 test_conv_back4()
 test_conv_back5()
+
 test_conv_back_df1()
+test_conv_back_df2()
