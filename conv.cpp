@@ -21,6 +21,16 @@ struct Dims {
     int sz() const { return w * h * c; }
 };
 
+struct Settings {
+    int epochs;
+    float lr;
+    float l2;
+    float grad_max;
+    int batch_size;
+
+    Settings() : lr(0.1), batch_size(8), epochs(10), l2(0.0001), grad_max(50) {}
+};
+
 template <class T>
 class Pool {
    public:
@@ -231,10 +241,10 @@ class Param {
     Volume& grad() { return grad_; }
     const Volume& grad() const { return grad_; }
 
-    void sgd(float lr) {
+    void sgd(const Settings& s) {
         for (int i = 0; i < val_.sz(); ++i) {
             mem_[i] = 0.9 * mem_[i] + 0.1 * grad_[i];
-            val_[i] -= lr * mem_[i];
+            val_[i] = val_[i] - s.lr * (mem_[i] + s.l2 * 2 * val_[i]);
         }
         grad_.zero();
     }
@@ -268,7 +278,7 @@ class Layer {
    public:
     virtual Volume& forward(const Volume&) = 0;
     virtual Volume backward(const Volume& grad) = 0;
-    virtual void update(float lr) = 0;
+    virtual void update(const Settings&) = 0;
     virtual Dims out_shape() const = 0;
 };
 
@@ -284,7 +294,7 @@ class Input : public Layer {
         grad.share_with(out);
         return out;
     }
-    virtual void update(float lr) {}
+    virtual void update(const Settings&) {}
     virtual Dims out_shape() const { return out_shape_; }
 
    private:
@@ -309,12 +319,12 @@ class Relu : public Layer {
     virtual Volume backward(const Volume& pgrad) override {
         Volume grad = pgrad.from_shape();
         for (int i = 0; i < grad.sz(); ++i) {
-            grad[i] += res_[i] > 0 ? pgrad[i] : 0;
+            grad[i] = res_[i] > 0 ? pgrad[i] : 0;
         }
         return std::move(grad);
     }
 
-    virtual void update(float lr) override {}
+    virtual void update(const Settings&) override {}
     virtual Dims out_shape() const { return out_shape_; }
 
    private:
@@ -355,9 +365,9 @@ class FullyConn : public Layer {
         return x_grad;
     }
 
-    virtual void update(float lr) override {
-        w_.sgd(lr);
-        b_.sgd(lr);
+    virtual void update(const Settings& s) override {
+        w_.sgd(s);
+        b_.sgd(s);
     }
 
     void set_weights(Volume w, Volume b) {
@@ -416,13 +426,14 @@ class MaxPool : public Layer {
 
     virtual Volume backward(const Volume& pgrad) override {
         Volume grad = x_.from_shape();
+        grad.zero();
         for (int i = 0; i < res_.sz(); ++i) {
             grad[cache_[i]] = pgrad[i];
         }
         return grad;
     }
 
-    virtual void update(float lr) override {}
+    virtual void update(const Settings&) override {}
 
     virtual Dims out_shape() const override { return out_shape_; }
 
@@ -461,7 +472,7 @@ class MSE : public Layer {
         return grad;
     }
 
-    virtual void update(float lr) override {}
+    virtual void update(const Settings&) override {}
     virtual Dims out_shape() const override { return Dims{1, 1, 1}; }
 
    private:
@@ -590,10 +601,10 @@ class Conv : public Layer {
         return vs;
     }
 
-    virtual void update(float lr) override {
+    virtual void update(const Settings& s) override {
         for (int i = 0; i < int(filters_.size()); ++i) {
-            filters_[i].sgd(lr);
-            biases_[i].sgd(lr);
+            filters_[i].sgd(s);
+            biases_[i].sgd(s);
         }
     }
 
@@ -613,22 +624,22 @@ class Conv : public Layer {
 
 class Net {
    public:
-    Net() : lr_(0.1), batch_size_(8), epochs_(10) {}
-
-    void set_lr(float x) { lr_ = x; }
-    void set_batch_size(int x) { batch_size_ = x; }
-    void set_epochs(int e) { epochs_ = e; }
+    void set_lr(float x) { settings_.lr = x; }
+    void set_batch_size(int x) { settings_.batch_size = x; }
+    void set_epochs(int e) { settings_.epochs = e; }
+    void set_l2(float x) { settings_.l2 = x; }
 
     void train(std::vector<Volume>&& xs, std::vector<Volume>&& ys) {
         xs_ = std::move(xs);
         ys_ = std::move(ys);
 
-        std::vector<float> errs(xs_.size() / batch_size_ + 1);
-        for (int e = 0; e < epochs_; ++e) {
+        std::vector<float> errs(xs_.size() / settings_.batch_size + 1);
+        for (int e = 0; e < settings_.epochs; ++e) {
             std::cout << "Epoch " << e << "\n";
-            for (int i = 0; i < int(xs_.size()); i += batch_size_) {
+            for (int i = 0; i < int(xs_.size()); i += settings_.batch_size) {
                 errs.clear();
-                for (int j = i; j < std::min(int(xs_.size()), i + batch_size_);
+                for (int j = i;
+                     j < std::min(int(xs_.size()), i + settings_.batch_size);
                      ++j) {
                     mse_.set_target(ys_[j]);
                     errs.push_back(forward(xs_[j])[0]);
@@ -697,7 +708,7 @@ class Net {
 
     void update() {
         for (auto& l : layers_) {
-            l->update(lr_);
+            l->update(settings_);
         }
     }
 
@@ -706,9 +717,7 @@ class Net {
     std::vector<Volume> xs_;
     std::vector<Volume> ys_;
     MSE mse_;
-    float lr_;
-    int batch_size_;
-    int epochs_;
+    Settings settings_;
 };
 
 namespace p = boost::python;
@@ -836,6 +845,7 @@ BOOST_PYTHON_MODULE(miniconv) {
         .def("maxpool", &Net::maxpool)
         .def("relu", &Net::relu)
         .def("set_batch_size", &Net::set_batch_size)
+        .def("set_l2", &Net::set_l2)
         .def("set_epochs", &Net::set_epochs)
         .def("set_lr", &Net::set_lr)
         .def("train",
