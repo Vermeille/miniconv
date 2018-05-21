@@ -449,7 +449,7 @@ class Conv : public Layer {
             filters_.back().gaussian();
             biases_.push_back(0);
         }
-        for (int i = 0; i < filters_.size(); ++i) {
+        for (int i = 0; i < int(filters_.size()); ++i) {
             dfilters_.emplace_back(filters_[i].from_shape());
             dfilters_.back().zero();
             dbiases_.push_back(0);
@@ -460,7 +460,7 @@ class Conv : public Layer {
         input.share_with(x_);
         res_ = Volume(input.w(), input.h(), filters_.size());
 
-        for (int filter = 0; filter < filters_.size(); ++filter) {
+        for (int filter = 0; filter < int(filters_.size()); ++filter) {
             for (int i = res_.cha_idx(filter), end = res_.cha_idx(filter + 1);
                  i < end;
                  ++i) {
@@ -501,7 +501,7 @@ class Conv : public Layer {
         Volume dx = x_.from_shape();
         dx.zero();
 
-        for (int filter = 0; filter < filters_.size(); ++filter) {
+        for (int filter = 0; filter < int(filters_.size()); ++filter) {
             for (int i = pgrad.cha_idx(filter), end = pgrad.cha_idx(filter + 1);
                  i < end;
                  ++i) {
@@ -545,7 +545,7 @@ class Conv : public Layer {
         filters_ = std::move(fs);
         biases_ = std::move(bs);
 
-        for (int i = 0; i < filters_.size(); ++i) {
+        for (int i = 0; i < int(filters_.size()); ++i) {
             dfilters_.emplace_back(filters_[i].from_shape());
             dfilters_.back().zero();
             dbiases_.push_back(0);
@@ -555,14 +555,14 @@ class Conv : public Layer {
     const std::vector<Volume>& filters_grad() const { return dfilters_; }
 
     virtual void update(float lr) override {
-        for (int i = 0; i < filters_.size(); ++i) {
+        for (int i = 0; i < int(filters_.size()); ++i) {
             filters_[i].update_with(lr, dfilters_[i]);
         }
-        for (int i = 0; i < biases_.size(); ++i) {
+        for (int i = 0; i < int(biases_.size()); ++i) {
             biases_[i] -= lr * dbiases_[i];
         }
 
-        for (int i = 0; i < filters_.size(); ++i) {
+        for (int i = 0; i < int(filters_.size()); ++i) {
             dfilters_[i].zero();
             dbiases_[i] = 0;
         }
