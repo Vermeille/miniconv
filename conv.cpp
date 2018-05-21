@@ -199,18 +199,6 @@ class Volume {
         v.sz_ = sz_;
     }
 
-    void update_with(float lr, const Volume& o) {
-#if _GLIBCXX_DEBUG
-        if (sz_ != o.sz_) {
-            throw std::runtime_error(
-                "trying to update a matrix with a different size");
-        }
-#endif
-        for (int i = 0; i < sz_; ++i) {
-            res_[i] -= lr * o.res_[i];
-        }
-    }
-
     void gaussian() {
         for (int i = 0; i < sz_; ++i) {
             res_[i] = gen_gaussian();
@@ -223,6 +211,57 @@ class Volume {
     int c_;
     int sz_;
     Pool<float[]>::Recyclable res_;
+};
+
+class Param {
+   public:
+    Param() = default;
+    Param(Param&&) = default;
+    Param(Dims d) : Param(d.w, d.h, d.c) {}
+    Param(int w, int h, int c) : val_(w, h, c), grad_(w, h, c), mem_(w, h, c) {
+        val_.gaussian();
+        grad_.zero();
+        mem_.zero();
+    }
+
+    float& operator[](int i) { return val_[i]; }
+    float operator[](int i) const { return val_[i]; }
+
+    void reset_grad() { grad_.zero(); }
+    Volume& grad() { return grad_; }
+    const Volume& grad() const { return grad_; }
+
+    void sgd(float lr) {
+        for (int i = 0; i < val_.sz(); ++i) {
+            mem_[i] = 0.9 * mem_[i] + 0.1 * grad_[i];
+            val_[i] -= lr * mem_[i];
+        }
+        grad_.zero();
+    }
+
+    int sz() const { return val_.sz(); }
+    Volume& vol() { return val_; }
+    const Volume& vol() const { return val_; }
+
+    Param& operator=(Param&& o) = default;
+
+    void reinit(Volume& v) {
+        v.share_with(val_);
+        grad_ = v.from_shape();
+        grad_.zero();
+        mem_ = v.from_shape();
+        mem_.zero();
+    }
+
+    int w() const { return val_.w(); }
+    int h() const { return val_.h(); }
+    int c() const { return val_.c(); }
+    int cha_idx(int c) const { return val_.cha_idx(c); }
+
+   private:
+    Volume val_;
+    Volume grad_;
+    Volume mem_;
 };
 
 class Layer {
@@ -286,14 +325,12 @@ class Relu : public Layer {
 class FullyConn : public Layer {
    public:
     FullyConn() = default;
-    FullyConn(Dims in_sz) : w_(in_sz), b_(0), w_grad_(in_sz), b_grad_(0) {
-        w_.gaussian();
-        w_grad_.zero();
-    }
+    FullyConn(Dims in_sz) : w_(in_sz), b_(1, 1, 1) {}
+
     virtual Volume& forward(const Volume& input) override {
         input.share_with(x_);
 
-        float sum = b_;
+        float sum = b_[0];
         for (int i = 0; i < input.sz(); ++i) {
             sum += input[i] * w_[i];
         }
@@ -304,47 +341,39 @@ class FullyConn : public Layer {
 
     virtual Volume backward(const Volume& pgrad) override {
         float d = pgrad[0];
-        b_grad_ += d;
-        for (int i = 0; i < w_grad_.sz(); ++i) {
-            w_grad_[i] += d * x_[i];
+        b_.grad()[0] += d;
+        Volume& w_grad = w_.grad();
+        for (int i = 0; i < w_.sz(); ++i) {
+            w_grad[i] += d * x_[i];
         }
 
-        Volume x_grad = w_grad_.from_shape();
+        Volume x_grad = w_.vol().from_shape();
 
-        for (int i = 0; i < w_grad_.sz(); ++i) {
+        for (int i = 0; i < w_grad.sz(); ++i) {
             x_grad[i] = d * w_[i];
         }
         return x_grad;
     }
 
     virtual void update(float lr) override {
-        w_.update_with(lr, w_grad_);
-        b_ -= lr * b_grad_;
-
-        w_grad_.zero();
-        b_grad_ = 0;
+        w_.sgd(lr);
+        b_.sgd(lr);
     }
 
-    void set_weights(Volume w, float b) {
-        w_ = std::move(w);
-        b_ = b;
-
-        w_grad_ = w_.from_shape();
-        w_grad_.zero();
-        b_grad_ = 0;
+    void set_weights(Volume w, Volume b) {
+        w_.reinit(w);
+        b_.reinit(b);
     }
 
-    const Volume& grads() const { return w_grad_; }
-    float bias() const { return b_; }
-    const Volume& weights() const { return w_; }
+    const Volume& grads() const { return w_.grad(); }
+    float bias() const { return b_.vol()[0]; }
+    const Volume& weights() const { return w_.vol(); }
 
     virtual Dims out_shape() const override { return Dims{1, 1, 1}; }
 
    private:
-    Volume w_;
-    float b_;
-    Volume w_grad_;
-    float b_grad_;
+    Param w_;
+    Param b_;
     Volume res_;
     Volume x_;
 };
@@ -352,8 +381,9 @@ class FullyConn : public Layer {
 class MaxPool : public Layer {
    public:
     MaxPool(Dims d) : out_shape_(Dims{d.w / 2, d.h / 2, d.c}) {}
+
     virtual Volume& forward(const Volume& input) override {
-        x_ = &input;
+        input.share_with(x_);
         res_ = Volume(input.w() / 2, input.h() / 2, input.c());
         if (!cache_) {
             cache_ = std::make_unique<int[]>(res_.sz());
@@ -385,7 +415,7 @@ class MaxPool : public Layer {
     }
 
     virtual Volume backward(const Volume& pgrad) override {
-        Volume grad = x_->from_shape();
+        Volume grad = x_.from_shape();
         for (int i = 0; i < res_.sz(); ++i) {
             grad[cache_[i]] = pgrad[i];
         }
@@ -397,7 +427,7 @@ class MaxPool : public Layer {
     virtual Dims out_shape() const override { return out_shape_; }
 
    private:
-    const Volume* x_;
+    Volume x_;
     std::unique_ptr<int[]> cache_;
     Volume res_;
     Dims out_shape_;
@@ -446,13 +476,8 @@ class Conv : public Layer {
     Conv(Dims in, Dims kerns) : in_sz_(in), kern_sz_(kerns) {
         for (int i = 0; i < kern_sz_.c; ++i) {
             filters_.emplace_back(kern_sz_.w, kern_sz_.h, in.c);
-            filters_.back().gaussian();
-            biases_.push_back(0);
-        }
-        for (int i = 0; i < int(filters_.size()); ++i) {
-            dfilters_.emplace_back(filters_[i].from_shape());
-            dfilters_.back().zero();
-            dbiases_.push_back(0);
+            biases_.emplace_back(1, 1, 1);
+            biases_.back().vol().zero();
         }
     }
 
@@ -464,10 +489,10 @@ class Conv : public Layer {
             for (int i = res_.cha_idx(filter), end = res_.cha_idx(filter + 1);
                  i < end;
                  ++i) {
-                res_[i] = biases_[filter];
+                res_[i] = biases_[filter][0];
             }
             for (int wptr = 0; wptr < filters_[0].sz(); ++wptr) {
-                auto& f = filters_[filter];
+                auto& f = filters_[filter].vol();
 
                 float weight = f[wptr];
 
@@ -505,10 +530,10 @@ class Conv : public Layer {
             for (int i = pgrad.cha_idx(filter), end = pgrad.cha_idx(filter + 1);
                  i < end;
                  ++i) {
-                dbiases_[filter] += pgrad[i];
+                biases_[filter].grad()[0] += pgrad[i];
             }
-            auto& f = filters_[filter];
-            auto& df = dfilters_[filter];
+            auto& f = filters_[filter].vol();
+            auto& df = filters_[filter].grad();
             for (int wptr = 0; wptr < filters_[0].sz(); ++wptr) {
                 float weight = f[wptr];
 
@@ -542,29 +567,33 @@ class Conv : public Layer {
         if (fs.size() != bs.size()) {
             throw std::runtime_error("filters and biases of a different size");
         }
-        filters_ = std::move(fs);
-        biases_ = std::move(bs);
 
-        for (int i = 0; i < int(filters_.size()); ++i) {
-            dfilters_.emplace_back(filters_[i].from_shape());
-            dfilters_.back().zero();
-            dbiases_.push_back(0);
+        filters_.clear();
+        for (auto& v : fs) {
+            filters_.emplace_back();
+            filters_.back().reinit(v);
+        }
+
+        biases_.clear();
+        for (auto& v : bs) {
+            biases_.emplace_back(1, 1, 1);
+            biases_.back()[0] = v;
         }
     }
 
-    const std::vector<Volume>& filters_grad() const { return dfilters_; }
+    std::vector<Volume> filters_grad() const {
+        std::vector<Volume> vs;
+        for (auto& f : filters_) {
+            vs.emplace_back();
+            f.grad().share_with(vs.back());
+        }
+        return vs;
+    }
 
     virtual void update(float lr) override {
         for (int i = 0; i < int(filters_.size()); ++i) {
-            filters_[i].update_with(lr, dfilters_[i]);
-        }
-        for (int i = 0; i < int(biases_.size()); ++i) {
-            biases_[i] -= lr * dbiases_[i];
-        }
-
-        for (int i = 0; i < int(filters_.size()); ++i) {
-            dfilters_[i].zero();
-            dbiases_[i] = 0;
+            filters_[i].sgd(lr);
+            biases_[i].sgd(lr);
         }
     }
 
@@ -574,10 +603,8 @@ class Conv : public Layer {
 
    private:
     int nb_f_;
-    std::vector<Volume> filters_;
-    std::vector<float> biases_;
-    std::vector<Volume> dfilters_;
-    std::vector<float> dbiases_;
+    std::vector<Param> filters_;
+    std::vector<Param> biases_;
     Volume res_;
     Volume x_;
     Dims in_sz_;
@@ -643,6 +670,7 @@ class Net {
         layers_.emplace_back(
             std::make_unique<MaxPool>(layers_.back()->out_shape()));
     }
+
     void fc() {
         layers_.emplace_back(
             std::make_unique<FullyConn>(layers_.back()->out_shape()));
@@ -789,8 +817,8 @@ BOOST_PYTHON_MODULE(miniconv) {
                  return to_array(fc->backward(from_array(arr)));
              })
         .def("set_weights",
-             +[](FullyConn* fc, np::ndarray weights, float b) {
-                 fc->set_weights(from_array(weights), b);
+             +[](FullyConn* fc, np::ndarray weights, np::ndarray b) {
+                 fc->set_weights(from_array(weights), from_array(b));
              })
         .def("grads", +[](FullyConn* fc) { return to_array(fc->grads()); })
         .def("bias", +[](FullyConn* fc) { return fc->bias(); })

@@ -10,7 +10,7 @@ mse = MSE()
 x = np.random.rand(5, 6, 3)
 w = np.random.rand(5, 6, 3)
 
-fc.set_weights(w, 0)
+fc.set_weights(w, np.array([[[0]]]))
 mine = fc.forward(x).squeeze()
 theirs = (x * w).sum()
 diff = mine - theirs
@@ -54,17 +54,20 @@ if not ok:
     print('diff:')
     print(diff)
 
-x = np.random.rand(1, 1, 1)
+x = np.random.rand(4, 1, 1)
 t_x = np.random.rand(*x.shape)
-b = 0#np.random.rand()
-fc.set_weights(np.random.rand(*x.shape), 0)
-for i in range(100):
-    start = time.time()
-    for j in range(100):
+b = np.random.rand()
+fc.set_weights(np.random.rand(*x.shape), np.array([[[0]]]))
+for i in range(50):
+    outs = []
+    for j in range(32):
         x = np.random.rand(*x.shape)
         y = (x * t_x).sum() + b
         mse.set_target(y.reshape(1, 1, 1))
         out = mse.forward(fc.forward(x))
         fc.backward(mse.backward(np.array([[[1]]])))
+        outs.append(out)
+    print(np.abs(t_x - fc.weights()).squeeze(), b - fc.bias())
     fc.update(0.01)
-    print('res: ', np.abs(fc.weights() - t_x).squeeze(), fc.bias(), b)
+    #print('loss: ', np.mean(outs))
+print(np.abs(t_x - fc.weights()).squeeze(), b - fc.bias())
