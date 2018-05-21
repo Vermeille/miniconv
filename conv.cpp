@@ -1,3 +1,4 @@
+#include <fenv.h>
 #include <algorithm>
 #include <boost/python/numpy.hpp>
 #include <iostream>
@@ -242,8 +243,14 @@ class Param {
     const Volume& grad() const { return grad_; }
 
     void sgd(const Settings& s) {
+        float len = 0;
         for (int i = 0; i < val_.sz(); ++i) {
-            mem_[i] = 0.9 * mem_[i] + 0.1 * grad_[i];
+            len += grad_[i] * grad_[i];
+        }
+        len = 1;  // std::sqrt(len + 1e-6);
+        for (int i = 0; i < val_.sz(); ++i) {
+            mem_[i] = 0.9 * mem_[i] +
+                      0.1 * (grad_[i] / std::min(s.grad_max, len) * len);
             val_[i] = val_[i] - s.lr * (mem_[i] + s.l2 * 2 * val_[i]);
         }
         grad_.zero();
@@ -335,32 +342,38 @@ class Relu : public Layer {
 class FullyConn : public Layer {
    public:
     FullyConn() = default;
-    FullyConn(Dims in_sz) : w_(in_sz), b_(1, 1, 1) {}
+    FullyConn(Dims in_sz, int c) : w_(in_sz.sz(), c, 1), b_(1, c, 1) {}
 
     virtual Volume& forward(const Volume& input) override {
         input.share_with(x_);
+        res_ = Volume(b_.sz(), 1, 1);
 
-        float sum = b_[0];
-        for (int i = 0; i < input.sz(); ++i) {
-            sum += input[i] * w_[i];
+        for (int c = 0, wptr = 0; c < b_.sz(); ++c, wptr += input.sz()) {
+            float sum = b_[c];
+            for (int i = 0; i < input.sz(); ++i) {
+                sum += input[i] * w_[wptr + i];
+            }
+            res_[c] = sum;
         }
-        res_ = Volume(1, 1, 1);
-        res_[0] = sum;
         return res_;
     }
 
     virtual Volume backward(const Volume& pgrad) override {
-        float d = pgrad[0];
-        b_.grad()[0] += d;
-        Volume& w_grad = w_.grad();
-        for (int i = 0; i < w_.sz(); ++i) {
-            w_grad[i] += d * x_[i];
-        }
+        Volume x_grad = x_.from_shape();
+        x_grad.zero();
 
-        Volume x_grad = w_.vol().from_shape();
+        for (int c = 0, wptr = 0; c < b_.sz(); ++c, wptr += x_.sz()) {
+            float d = pgrad[c];
+            auto& dw = w_.grad();
 
-        for (int i = 0; i < w_grad.sz(); ++i) {
-            x_grad[i] = d * w_[i];
+            b_.grad()[c] += d;
+            for (int i = 0; i < x_.sz(); ++i) {
+                dw[wptr + i] += d * x_[i];
+            }
+
+            for (int i = 0; i < x_.sz(); ++i) {
+                x_grad[i] += d * w_[wptr + i];
+            }
         }
         return x_grad;
     }
@@ -370,16 +383,40 @@ class FullyConn : public Layer {
         b_.sgd(s);
     }
 
-    void set_weights(Volume w, Volume b) {
-        w_.reinit(w);
+    void set_weights(std::vector<Volume>&& w, Volume b) {
+        Volume v(w[0].sz(), w.size(), 1);
+        for (int i = 0; i < w.size(); ++i) {
+            for (int j = 0; j < w[i].sz(); ++j) {
+                v[v.w() * i + j] = w[i][j];
+            }
+        }
+        w_.reinit(v);
         b_.reinit(b);
     }
 
-    const Volume& grads() const { return w_.grad(); }
+    std::vector<Volume> grads() const {
+        std::vector<Volume> gs;
+        for (int i = 0; i < b_.sz(); ++i) {
+            gs.emplace_back(x_.w(), x_.h(), x_.c());
+            for (int j = 0; j < w_.w(); ++j) {
+                gs.back()[j] = w_.grad()[w_.w() * i + j];
+            }
+        }
+        return gs;
+    }
     float bias() const { return b_.vol()[0]; }
-    const Volume& weights() const { return w_.vol(); }
+    std::vector<Volume> weights() const {
+        std::vector<Volume> gs;
+        for (int i = 0; i < b_.sz(); ++i) {
+            gs.emplace_back(x_.w(), x_.h(), x_.c());
+            for (int j = 0; j < w_.w(); ++j) {
+                gs.back()[j] = w_[w_.w() * i + j];
+            }
+        }
+        return gs;
+    }
 
-    virtual Dims out_shape() const override { return Dims{1, 1, 1}; }
+    virtual Dims out_shape() const override { return Dims{b_.h(), 1, 1}; }
 
    private:
     Param w_;
@@ -682,9 +719,9 @@ class Net {
             std::make_unique<MaxPool>(layers_.back()->out_shape()));
     }
 
-    void fc() {
+    void fc(int out) {
         layers_.emplace_back(
-            std::make_unique<FullyConn>(layers_.back()->out_shape()));
+            std::make_unique<FullyConn>(layers_.back()->out_shape(), out));
     }
 
     const Volume& forward(const Volume& x) {
@@ -826,12 +863,33 @@ BOOST_PYTHON_MODULE(miniconv) {
                  return to_array(fc->backward(from_array(arr)));
              })
         .def("set_weights",
-             +[](FullyConn* fc, np::ndarray weights, np::ndarray b) {
-                 fc->set_weights(from_array(weights), from_array(b));
+             +[](FullyConn* fc, p::list weights, np::ndarray b) {
+                 std::vector<Volume> ws;
+                 for (int i = 0; i < p::len(weights); ++i) {
+                     ws.emplace_back(
+                         from_array(p::extract<np::ndarray>(weights[i])));
+                 }
+                 fc->set_weights(std::move(ws), from_array(b));
              })
-        .def("grads", +[](FullyConn* fc) { return to_array(fc->grads()); })
+        .def("grads",
+             +[](FullyConn* fc) {
+                 p::list ws;
+                 auto ws2 = fc->grads();
+                 for (auto& w : ws2) {
+                     ws.append(to_array(w));
+                 }
+                 return ws;
+             })
         .def("bias", +[](FullyConn* fc) { return fc->bias(); })
-        .def("weights", +[](FullyConn* fc) { return to_array(fc->weights()); })
+        .def("weights",
+             +[](FullyConn* fc) {
+                 p::list ws;
+                 auto ws2 = fc->weights();
+                 for (auto& w : ws2) {
+                     ws.append(to_array(w));
+                 }
+                 return ws;
+             })
         .def("update", &FullyConn::update);
     class_<Net, boost::noncopyable>("Net")
         .def("conv", &Net::conv)
@@ -866,5 +924,13 @@ BOOST_PYTHON_MODULE(miniconv) {
              })
         .def("update", &Net::update);
 
+    class_<Settings>("Settings")
+        .def_readwrite("lr", &Settings::lr)
+        .def_readwrite("l2", &Settings::l2)
+        .def_readwrite("epochs", &Settings::epochs)
+        .def_readwrite("grad_max", &Settings::grad_max)
+        .def_readwrite("batch_size", &Settings::batch_size);
+
     np::initialize();
+    //    feenableexcept(FE_ALL_EXCEPT & ~FE_INEXACT);
 }
