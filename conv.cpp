@@ -3,8 +3,23 @@
 #include <iostream>
 #include <list>
 #include <memory>
+#include <random>
 #include <stdexcept>
 #include <vector>
+
+float gen_gaussian() {
+    static std::default_random_engine generator;
+    static std::normal_distribution<float> distribution;
+    return distribution(generator);
+}
+
+struct Dims {
+    int w;
+    int h;
+    int c;
+
+    int sz() const { return w * h * c; }
+};
 
 template <class T>
 class Pool {
@@ -120,6 +135,7 @@ class Volume {
    public:
     Volume(int w, int h, int c)
         : w_(w), h_(h), c_(c), sz_(h * w * c), res_(float_pool_.alloc(sz_)) {}
+    Volume(const Dims& sz) : Volume(sz.w, sz.h, sz.c) {}
 
     Volume() = default;
     Volume(Volume&& o) = default;
@@ -195,6 +211,12 @@ class Volume {
         }
     }
 
+    void gaussian() {
+        for (int i = 0; i < sz_; ++i) {
+            res_[i] = gen_gaussian();
+        }
+    }
+
    private:
     int w_;
     int h_;
@@ -204,13 +226,37 @@ class Volume {
 };
 
 class Layer {
+   public:
     virtual Volume& forward(const Volume&) = 0;
     virtual Volume backward(const Volume& grad) = 0;
     virtual void update(float lr) = 0;
+    virtual Dims out_shape() const = 0;
+};
+
+class Input : public Layer {
+   public:
+    Input(Dims d) : out_shape_(d) {}
+    virtual Volume& forward(const Volume& x) override {
+        x.share_with(out_);
+        return out_;
+    }
+    virtual Volume backward(const Volume& grad) override {
+        Volume out;
+        grad.share_with(out);
+        return out;
+    }
+    virtual void update(float lr) {}
+    virtual Dims out_shape() const { return out_shape_; }
+
+   private:
+    Dims out_shape_;
+    Volume out_;
 };
 
 class Relu : public Layer {
    public:
+    Relu() = default;
+    Relu(Dims d) : out_shape_(d){};
     virtual Volume& forward(const Volume& input) override {
         auto res = input.from_shape();
         for (int i = 0; i < input.sz(); ++i) {
@@ -230,20 +276,22 @@ class Relu : public Layer {
     }
 
     virtual void update(float lr) override {}
+    virtual Dims out_shape() const { return out_shape_; }
 
    private:
     Volume res_;
+    Dims out_shape_;
 };
 
 class FullyConn : public Layer {
    public:
+    FullyConn() = default;
+    FullyConn(Dims in_sz) : w_(in_sz), b_(0), w_grad_(in_sz), b_grad_(0) {
+        w_.gaussian();
+        w_grad_.zero();
+    }
     virtual Volume& forward(const Volume& input) override {
         input.share_with(x_);
-
-        if (w_.sz() == 0) {
-            w_ = input.from_shape();
-            b_ = 0;
-        }
 
         float sum = b_;
         for (int i = 0; i < input.sz(); ++i) {
@@ -290,6 +338,8 @@ class FullyConn : public Layer {
     float bias() const { return b_; }
     const Volume& weights() const { return w_; }
 
+    virtual Dims out_shape() const override { return Dims{1, 1, 1}; }
+
    private:
     Volume w_;
     float b_;
@@ -301,6 +351,7 @@ class FullyConn : public Layer {
 
 class MaxPool : public Layer {
    public:
+    MaxPool(Dims d) : out_shape_(Dims{d.w / 2, d.h / 2, d.c}) {}
     virtual Volume& forward(const Volume& input) override {
         x_ = &input;
         res_ = Volume(input.w() / 2, input.h() / 2, input.c());
@@ -343,10 +394,13 @@ class MaxPool : public Layer {
 
     virtual void update(float lr) override {}
 
+    virtual Dims out_shape() const override { return out_shape_; }
+
    private:
     const Volume* x_;
     std::unique_ptr<int[]> cache_;
     Volume res_;
+    Dims out_shape_;
 };
 
 class MSE : public Layer {
@@ -378,6 +432,7 @@ class MSE : public Layer {
     }
 
     virtual void update(float lr) override {}
+    virtual Dims out_shape() const override { return Dims{1, 1, 1}; }
 
    private:
     Volume target_;
@@ -387,17 +442,22 @@ class MSE : public Layer {
 
 class Conv : public Layer {
    public:
-    Conv(int f) : nb_f_(f) {}
+    Conv() = default;
+    Conv(Dims in, Dims kerns) : in_sz_(in), kern_sz_(kerns) {
+        for (int i = 0; i < kern_sz_.c; ++i) {
+            filters_.emplace_back(kern_sz_.w, kern_sz_.h, in.c);
+            filters_.back().gaussian();
+            biases_.push_back(0);
+        }
+        for (int i = 0; i < filters_.size(); ++i) {
+            dfilters_.emplace_back(filters_[i].from_shape());
+            dfilters_.back().zero();
+            dbiases_.push_back(0);
+        }
+    }
 
     virtual Volume& forward(const Volume& input) override {
         input.share_with(x_);
-        if (filters_.empty()) {
-            for (int i = 0; i < nb_f_; ++i) {
-                filters_.emplace_back(3, 3, input.c());
-                biases_.push_back(0);
-            }
-        }
-
         res_ = Volume(input.w(), input.h(), filters_.size());
 
         for (int filter = 0; filter < filters_.size(); ++filter) {
@@ -441,13 +501,6 @@ class Conv : public Layer {
         Volume dx = x_.from_shape();
         dx.zero();
 
-        if (dfilters_.empty()) {
-            for (int i = 0; i < filters_.size(); ++i) {
-                dfilters_.emplace_back(
-                    filters_[i].w(), filters_[i].h(), filters_[i].c());
-                dbiases_.push_back(0);
-            }
-        }
         for (int filter = 0; filter < filters_.size(); ++filter) {
             for (int i = pgrad.cha_idx(filter), end = pgrad.cha_idx(filter + 1);
                  i < end;
@@ -491,6 +544,12 @@ class Conv : public Layer {
         }
         filters_ = std::move(fs);
         biases_ = std::move(bs);
+
+        for (int i = 0; i < filters_.size(); ++i) {
+            dfilters_.emplace_back(filters_[i].from_shape());
+            dfilters_.back().zero();
+            dbiases_.push_back(0);
+        }
     }
 
     const std::vector<Volume>& filters_grad() const { return dfilters_; }
@@ -509,6 +568,10 @@ class Conv : public Layer {
         }
     }
 
+    virtual Dims out_shape() const override {
+        return Dims{in_sz_.w, in_sz_.h, kern_sz_.c};
+    }
+
    private:
     int nb_f_;
     std::vector<Volume> filters_;
@@ -517,6 +580,43 @@ class Conv : public Layer {
     std::vector<float> dbiases_;
     Volume res_;
     Volume x_;
+    Dims in_sz_;
+    Dims kern_sz_;
+};
+
+class Net {
+   public:
+    Net() : lr_(0.1) {}
+
+    void set_lr(float x) { lr_ = x; }
+
+    void set_train_data(std::vector<Volume>&& xs, std::vector<Volume>&& ys) {
+        xs_ = std::move(xs);
+        ys_ = std::move(ys);
+    }
+
+    void conv(int kw, int kh, int nb) {
+        if (layers_.empty()) {
+            throw std::invalid_argument("input() must be the first layer");
+        }
+        auto c = std::make_unique<Conv>(layers_.back()->out_shape(),
+                                        Dims{kw, kh, nb});
+        layers_.emplace_back(std::move(c));
+    }
+
+    void input(int w, int h, int c) {
+        if (!layers_.empty()) {
+            throw std::invalid_argument("input() must be the first layer");
+        }
+        layers_.emplace_back(std::make_unique<Input>(Dims{w, h, c}));
+    }
+
+   private:
+    std::vector<std::unique_ptr<Layer>> layers_;
+    std::vector<Volume> xs_;
+    std::vector<Volume> ys_;
+    MSE mse_;
+    float lr_;
 };
 
 namespace p = boost::python;
@@ -559,7 +659,7 @@ np::ndarray to_array(const Volume& v) {
 
 BOOST_PYTHON_MODULE(miniconv) {
     using namespace boost::python;
-    class_<Conv, boost::noncopyable>("Conv", init<int>())
+    class_<Conv, boost::noncopyable>("Conv")
         .def("forward",
              +[](Conv* conv, np::ndarray arr) {
                  return to_array(conv->forward(from_array(arr)));

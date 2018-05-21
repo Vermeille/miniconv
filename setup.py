@@ -9,5 +9,5 @@ setup(
             "miniconv",
             ["conv.cpp"],
             libraries=["boost_python3", "boost_numpy3"],
-            extra_compile_args=["-O3", "-march=native"], )
+            extra_compile_args=["-ggdb3", "-O0", "-D_GLIBCXX_DEBUG", "-march=native"], )
     ])
