@@ -586,13 +586,36 @@ class Conv : public Layer {
 
 class Net {
    public:
-    Net() : lr_(0.1) {}
+    Net() : lr_(0.1), batch_size_(8), epochs_(10) {}
 
     void set_lr(float x) { lr_ = x; }
+    void set_batch_size(int x) { batch_size_ = x; }
+    void set_epochs(int e) { epochs_ = e; }
 
-    void set_train_data(std::vector<Volume>&& xs, std::vector<Volume>&& ys) {
+    void train(std::vector<Volume>&& xs, std::vector<Volume>&& ys) {
         xs_ = std::move(xs);
         ys_ = std::move(ys);
+
+        std::vector<float> errs(xs_.size() / batch_size_ + 1);
+        for (int e = 0; e < epochs_; ++e) {
+            std::cout << "Epoch " << e << "\n";
+            for (int i = 0; i < int(xs_.size()); i += batch_size_) {
+                errs.clear();
+                for (int j = i; j < std::min(int(xs_.size()), i + batch_size_);
+                     ++j) {
+                    mse_.set_target(ys_[j]);
+                    errs.push_back(forward(xs_[j])[0]);
+                    backward();
+                }
+                update();
+                float total = 0;
+                for (float x : errs) {
+                    total += x;
+                }
+                total /= errs.size();
+                std::cout << "loss: " << total << "\n";
+            }
+        }
     }
 
     void conv(int kw, int kh, int nb) {
@@ -611,12 +634,53 @@ class Net {
         layers_.emplace_back(std::make_unique<Input>(Dims{w, h, c}));
     }
 
+    void relu() {
+        layers_.emplace_back(
+            std::make_unique<Relu>(layers_.back()->out_shape()));
+    }
+
+    void maxpool() {
+        layers_.emplace_back(
+            std::make_unique<MaxPool>(layers_.back()->out_shape()));
+    }
+    void fc() {
+        layers_.emplace_back(
+            std::make_unique<FullyConn>(layers_.back()->out_shape()));
+    }
+
+    const Volume& forward(const Volume& x) {
+        Volume it;
+        x.share_with(it);
+        for (int i = 0; i < int(layers_.size()); ++i) {
+            layers_[i]->forward(it).share_with(it);
+        }
+        return mse_.forward(it);
+    }
+
+    Volume backward() {
+        Volume one(1, 1, 1);
+        one[0] = 1;
+        Volume it = mse_.backward(one);
+        for (int i = layers_.size(); i-- > 0;) {
+            layers_[i]->backward(it).share_with(it);
+        }
+        return it;
+    }
+
+    void update() {
+        for (auto& l : layers_) {
+            l->update(lr_);
+        }
+    }
+
    private:
     std::vector<std::unique_ptr<Layer>> layers_;
     std::vector<Volume> xs_;
     std::vector<Volume> ys_;
     MSE mse_;
     float lr_;
+    int batch_size_;
+    int epochs_;
 };
 
 namespace p = boost::python;
@@ -732,6 +796,37 @@ BOOST_PYTHON_MODULE(miniconv) {
         .def("bias", +[](FullyConn* fc) { return fc->bias(); })
         .def("weights", +[](FullyConn* fc) { return to_array(fc->weights()); })
         .def("update", &FullyConn::update);
+    class_<Net, boost::noncopyable>("Net")
+        .def("conv", &Net::conv)
+        .def("fc", &Net::fc)
+        .def("backward", +[](Net* net) { return to_array(net->backward()); })
+        .def("forward",
+             +[](Net* net, np::ndarray arr) {
+                 return to_array(net->forward(from_array(arr)));
+             })
+        .def("input", &Net::input)
+        .def("maxpool", &Net::maxpool)
+        .def("relu", &Net::relu)
+        .def("set_batch_size", &Net::set_batch_size)
+        .def("set_epochs", &Net::set_epochs)
+        .def("set_lr", &Net::set_lr)
+        .def("train",
+             +[](Net* net, p::list xs, p::list ys) {
+                 std::vector<Volume> vxs;
+                 std::vector<Volume> vys;
+                 if (p::len(xs) != p::len(ys)) {
+                     throw std::invalid_argument(
+                         "ys and xs must be of equal size");
+                 }
+                 for (int i = 0; i < p::len(xs); ++i) {
+                     vxs.emplace_back(
+                         from_array(p::extract<np::ndarray>(xs[i])));
+                     vys.emplace_back(
+                         from_array(p::extract<np::ndarray>(ys[i])));
+                 }
+                 net->train(std::move(vxs), std::move(vys));
+             })
+        .def("update", &Net::update);
 
     np::initialize();
 }
