@@ -29,8 +29,15 @@ struct Settings {
     float l2;
     float grad_max;
     int batch_size;
+    float lr_decay;
 
-    Settings() : lr(0.1), batch_size(8), epochs(10), l2(0.0001), grad_max(50) {}
+    Settings()
+        : lr(0.1),
+          batch_size(8),
+          epochs(10),
+          l2(0.0001),
+          grad_max(50),
+          lr_decay(1) {}
 };
 
 template <class T>
@@ -787,6 +794,7 @@ class Net {
     void set_batch_size(int x) { settings_.batch_size = x; }
     void set_epochs(int e) { settings_.epochs = e; }
     void set_l2(float x) { settings_.l2 = x; }
+    void set_lr_decay(float x) { settings_.lr_decay = x; }
 
     void train(std::vector<Volume>&& xs, std::vector<Volume>&& ys) {
         xs_ = std::move(xs);
@@ -794,8 +802,9 @@ class Net {
 
         std::vector<float> errs(xs_.size() / settings_.batch_size + 1);
         for (int e = 0; e < settings_.epochs; ++e) {
-            std::cout << "Epoch " << e << "\n";
+            settings_.lr *= settings_.lr_decay;
             for (int i = 0; i < int(xs_.size()); i += settings_.batch_size) {
+                std::cout << "Epoch " << e << "\n";
                 errs.clear();
                 for (int j = i;
                      j < std::min(int(xs_.size()), i + settings_.batch_size);
@@ -1034,6 +1043,7 @@ BOOST_PYTHON_MODULE(miniconv) {
         .def("set_l2", &Net::set_l2)
         .def("set_epochs", &Net::set_epochs)
         .def("set_lr", &Net::set_lr)
+        .def("set_lr_decay", &Net::set_lr_decay)
         .def("train",
              +[](Net* net, p::list xs, p::list ys) {
                  std::vector<Volume> vxs;
@@ -1054,6 +1064,7 @@ BOOST_PYTHON_MODULE(miniconv) {
 
     class_<Settings>("Settings")
         .def_readwrite("lr", &Settings::lr)
+        .def_readwrite("lr_decay", &Settings::lr_decay)
         .def_readwrite("l2", &Settings::l2)
         .def_readwrite("epochs", &Settings::epochs)
         .def_readwrite("grad_max", &Settings::grad_max)
