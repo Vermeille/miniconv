@@ -1,6 +1,7 @@
 #include <fenv.h>
 #include <algorithm>
 #include <boost/python/numpy.hpp>
+#include <iomanip>
 #include <iostream>
 #include <list>
 #include <memory>
@@ -216,6 +217,45 @@ class Volume {
         }
     }
 
+    std::pair<float, float> mean_std() const {
+        float m = 0;
+        for (int i = 0; i < sz_; ++i) {
+            m += res_[i];
+        }
+        m = m / sz_;
+
+        float s = 0;
+        for (int i = 0; i < sz_; ++i) {
+            s += (res_[i] - m) * (res_[i] - m);
+        }
+        s = std::sqrt(s / (sz_ - 1));
+        return std::make_pair(m, s);
+    }
+
+    float min() const {
+        float m = res_[0];
+        for (int i = 1; i < sz_; ++i) {
+            m = m < res_[i] ? m : res_[i];
+        }
+        return m;
+    }
+
+    float max() const {
+        float m = res_[0];
+        for (int i = 1; i < sz_; ++i) {
+            m = m > res_[i] ? m : res_[i];
+        }
+        return m;
+    }
+
+    int nonzero() const {
+        int count = 0;
+        for (int i = 1; i < sz_; ++i) {
+            count += res_[i] == 0 ? 1 : 0;
+        }
+        return count;
+    }
+
    private:
     int w_;
     int h_;
@@ -287,6 +327,88 @@ class Layer {
     virtual Volume backward(const Volume& grad) = 0;
     virtual void update(const Settings&) = 0;
     virtual Dims out_shape() const = 0;
+};
+
+class Verbose : public Layer {
+   public:
+    Verbose(Dims d, std::string name) : out_shape_(d), name_(name) {}
+
+    virtual Volume& forward(const Volume& x) override {
+        fwd_.emplace_back();
+        x.share_with(fwd_.back());
+        return fwd_.back();
+    }
+
+    virtual Volume backward(const Volume& x) override {
+        bwd_.emplace_back();
+        x.share_with(bwd_.back());
+        Volume v;
+        bwd_.back().share_with(v);
+        return v;
+    }
+
+    virtual void update(const Settings&) override {
+        float statsfwd[] = {0, 0, 0, 0, 0};
+        for (auto& v : fwd_) {
+            auto local = v.mean_std();
+            statsfwd[0] += local.first;
+            statsfwd[1] += local.second;
+            statsfwd[2] += v.max();
+            statsfwd[3] += v.min();
+            statsfwd[4] += float(v.nonzero()) / v.sz();
+        }
+        float statsbwd[] = {0, 0, 0, 0, 0};
+        for (auto& v : bwd_) {
+            auto local = v.mean_std();
+            statsbwd[0] += local.first;
+            statsbwd[1] += local.second;
+            statsbwd[2] += v.max();
+            statsbwd[3] += v.min();
+            statsbwd[4] += float(v.nonzero()) / v.sz();
+        }
+
+        std::cout << "               Statistics for " << name_ << ":\n";
+        std::cout << "  Batch size: " << fwd_.size() << "\n";
+        std::cout << "  Forward pass:                       Backward Pass:\n";
+        std::cout << "    Shape: (" << std::setw(3) << fwd_[0].w() << ", "
+                  << std::setw(3) << fwd_[0].h() << ", " << std::setw(3)
+                  << fwd_[0].c() << ")            "
+                  << "  Shape: (" << std::setw(3) << bwd_[0].w() << ", "
+                  << std::setw(3) << bwd_[0].h() << ", " << std::setw(3)
+                  << bwd_[0].c() << ")\n";
+
+        std::cout << "    Mean:     " << std::setw(8)
+                  << statsfwd[0] / fwd_.size()
+                  << "                  Mean:     " << statsbwd[0] / bwd_.size()
+                  << "\n";
+        std::cout << "    Std:      " << std::setw(8)
+                  << statsfwd[1] / fwd_.size()
+                  << "                  Std:      " << statsbwd[1] / bwd_.size()
+                  << "\n";
+        std::cout << "    Max:      " << std::setw(8)
+                  << statsfwd[2] / fwd_.size()
+                  << "                  Max:      " << statsbwd[2] / bwd_.size()
+                  << "\n";
+        std::cout << "    Min:      " << std::setw(8)
+                  << statsfwd[3] / fwd_.size()
+                  << "                  Min:      " << statsbwd[3] / bwd_.size()
+                  << "\n";
+        std::cout << "    Non-Zero: " << std::setw(8)
+                  << statsfwd[4] / fwd_.size()
+                  << "                  Non-Zero: " << statsbwd[4] / fwd_.size()
+                  << "\n";
+
+        fwd_.clear();
+        bwd_.clear();
+    }
+
+    virtual Dims out_shape() const override { return out_shape_; }
+
+   private:
+    std::vector<Volume> fwd_;
+    std::vector<Volume> bwd_;
+    Dims out_shape_;
+    std::string name_;
 };
 
 class Input : public Layer {
@@ -724,6 +846,11 @@ class Net {
             std::make_unique<FullyConn>(layers_.back()->out_shape(), out));
     }
 
+    void verbose(std::string name) {
+        layers_.emplace_back(
+            std::make_unique<Verbose>(layers_.back()->out_shape(), name));
+    }
+
     const Volume& forward(const Volume& x) {
         Volume it;
         x.share_with(it);
@@ -902,6 +1029,7 @@ BOOST_PYTHON_MODULE(miniconv) {
         .def("input", &Net::input)
         .def("maxpool", &Net::maxpool)
         .def("relu", &Net::relu)
+        .def("verbose", &Net::verbose)
         .def("set_batch_size", &Net::set_batch_size)
         .def("set_l2", &Net::set_l2)
         .def("set_epochs", &Net::set_epochs)
