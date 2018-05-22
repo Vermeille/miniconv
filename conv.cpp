@@ -481,7 +481,9 @@ class Relu : public Layer {
 class FullyConn : public Layer {
    public:
     FullyConn() = default;
-    FullyConn(Dims in_sz, int c) : w_(in_sz.sz(), c, 1), b_(1, c, 1) {}
+    FullyConn(Dims in_sz, int c) : w_(in_sz.sz(), c, 1), b_(1, c, 1) {
+        b_.vol().zero();
+    }
 
     virtual Volume& forward(const Volume& input) override {
         input.share_with(x_);
