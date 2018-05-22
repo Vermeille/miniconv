@@ -10,7 +10,8 @@
 #include <vector>
 
 float gen_gaussian() {
-    static std::default_random_engine generator;
+    static std::random_device r;
+    static std::default_random_engine generator(r());
     static std::normal_distribution<float> distribution;
     return distribution(generator);
 }
