@@ -16,6 +16,13 @@ float gen_gaussian() {
     return distribution(generator);
 }
 
+template <typename T>
+int sgn(T val) {
+    return (T(0) < val) - (val < T(0));
+}
+
+enum class Optimizer { Sgd, Sgdm, PowerSign };
+
 struct Dims {
     int w;
     int h;
@@ -467,6 +474,94 @@ class Verbose : public Layer {
     Dims out_shape_;
     std::string name_;
     Volume test_thru_;
+    bool train_;
+};
+
+class BatchNorm : public Layer {
+   public:
+    BatchNorm(Dims d)
+        : mu_(d), sigma_(d), out_shape_(d), beta_(d), gamma_(d), train_(false) {
+        beta_.vol().zero();
+        mu_.zero();
+        for (int i = 0; i < gamma_.sz(); ++i) {
+            gamma_.vol()[i] = 1;
+            sigma_[i] = 1;
+        }
+    }
+
+    virtual Volume& forward(const Volume& input) {
+        if (train_) {
+            memory_.emplace_back();
+            input.share_with(memory_.back());
+        }
+        scaled_ = input.from_shape();
+        centered_ = input.from_shape();
+        for (int i = 0; i < scaled_.sz(); ++i) {
+            centered_[i] = (input[i] - mu_[i]) / sigma_[i];
+            scaled_[i] = gamma_[i] * centered_[i] + beta_[i];
+        }
+        return scaled_;
+    }
+
+    virtual Volume backward(const Volume& pgrad) {
+        Volume out = pgrad.from_shape();
+        for (int i = 0; i < out.sz(); ++i) {
+            gamma_.grad()[i] += pgrad[i] * centered_[i];
+            beta_.grad()[i] += pgrad[i];
+            out[i] = pgrad[i] * gamma_[i] / sigma_[i];
+        }
+        return out;
+    }
+
+    virtual void update(const Settings& s) {
+        beta_.descend(s);
+        gamma_.descend(s);
+        Volume avg = mu_.from_shape();
+        avg.zero();
+        // compute average
+        for (auto& m : memory_) {
+            for (int i = 0; i < m.sz(); ++i) {
+                avg[i] += m[i];
+            }
+        }
+        for (int i = 0; i < mu_.sz(); ++i) {
+            avg[i] /= memory_.size();
+        }
+
+        // compute std
+        Volume std = mu_.from_shape();
+        std.zero();
+        for (auto& m : memory_) {
+            for (int i = 0; i < m.sz(); ++i) {
+                float x = m[i] - avg[i];
+                std[i] += x * x;
+            }
+        }
+        for (int i = 0; i < mu_.sz(); ++i) {
+            std[i] /= memory_.size() - 1;
+        }
+
+        // update
+        for (int i = 0; i < mu_.sz(); ++i) {
+            mu_[i] = 0.9 * mu_[i] + 0.1 * avg[i];
+            sigma_[i] = 0.9 * sigma_[i] + 0.1 * std[i];
+        }
+
+        memory_.clear();
+    }
+
+    virtual Dims out_shape() const { return out_shape_; }
+    virtual void set_train_mode(bool train) override { train_ = train; }
+
+   private:
+    Volume mu_;
+    Volume sigma_;
+    Param beta_;
+    Param gamma_;
+    std::vector<Volume> memory_;
+    Dims out_shape_;
+    Volume centered_;
+    Volume scaled_;
     bool train_;
 };
 
@@ -928,6 +1023,11 @@ class Net {
             std::make_unique<Verbose>(layers_.back()->out_shape(), name));
     }
 
+    void batch_norm() {
+        layers_.emplace_back(
+            std::make_unique<BatchNorm>(layers_.back()->out_shape()));
+    }
+
     const Volume predict(const Volume& x) {
         set_train_mode(false);
         Volume it;
@@ -1120,6 +1220,7 @@ BOOST_PYTHON_MODULE(miniconv) {
         .def("maxpool", &Net::maxpool)
         .def("relu", &Net::relu)
         .def("verbose", &Net::verbose)
+        .def("batch_norm", &Net::batch_norm)
         .def("set_batch_size", &Net::set_batch_size)
         .def("set_l2", &Net::set_l2)
         .def("set_epochs", &Net::set_epochs)
