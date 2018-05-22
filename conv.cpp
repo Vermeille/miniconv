@@ -31,6 +31,7 @@ struct Settings {
     float grad_max;
     int batch_size;
     float lr_decay;
+    Optimizer optimizer;
 
     Settings()
         : lr(0.1),
@@ -38,7 +39,8 @@ struct Settings {
           epochs(10),
           l2(0.0001),
           grad_max(5),
-          lr_decay(1) {}
+          lr_decay(1),
+          optimizer(Optimizer::Sgdm) {}
 };
 
 template <class T>
@@ -299,20 +301,6 @@ class Param {
     Volume& grad() { return grad_; }
     const Volume& grad() const { return grad_; }
 
-    void sgd(const Settings& s) {
-        float len = 0;
-        for (int i = 0; i < val_.sz(); ++i) {
-            len += grad_[i] * grad_[i];
-        }
-        len = 1;  // std::sqrt(len + 1e-6);
-        for (int i = 0; i < val_.sz(); ++i) {
-            mem_[i] = 0.9 * mem_[i] +
-                      0.1 * (grad_[i] / std::min(s.grad_max, len) * len);
-            val_[i] = val_[i] - s.lr * (mem_[i] + s.l2 * 2 * val_[i]);
-        }
-        grad_.zero();
-    }
-
     int sz() const { return val_.sz(); }
     Volume& vol() { return val_; }
     const Volume& vol() const { return val_; }
@@ -332,7 +320,51 @@ class Param {
     int c() const { return val_.c(); }
     int cha_idx(int c) const { return val_.cha_idx(c); }
 
+    void descend(const Settings& s) {
+        switch (s.optimizer) {
+            case Optimizer::Sgdm:
+                sgdm(s);
+                break;
+            case Optimizer::Sgd:
+                sgd(s);
+                break;
+            case Optimizer::PowerSign:
+                power_sign(s);
+                break;
+        }
+    }
+
    private:
+    void sgd(const Settings& s) {
+        float len = grad_.norm();
+        for (int i = 0; i < val_.sz(); ++i) {
+            val_[i] = val_[i] - s.lr * grad_[i] - s.l2 * 2 * val_[i];
+        }
+        grad_.zero();
+    }
+
+    void sgdm(const Settings& s) {
+        float len = grad_.norm();
+        for (int i = 0; i < val_.sz(); ++i) {
+            grad_[i] =
+                len > s.grad_max ? grad_[i] / len * s.grad_max : grad_[i];
+            mem_[i] = 0.9 * mem_[i] + 0.1 * grad_[i];
+            val_[i] = val_[i] - s.lr * mem_[i] - s.l2 * 2 * val_[i];
+        }
+        grad_.zero();
+    }
+
+    void power_sign(const Settings& s) {
+        float len = grad_.norm();
+        for (int i = 0; i < val_.sz(); ++i) {
+            grad_[i] =
+                len > s.grad_max ? grad_[i] / len * s.grad_max : grad_[i];
+            mem_[i] = 0.9 * mem_[i] + 0.1 * grad_[i];
+            val_[i] -= s.lr * exp(sgn(grad_[i]) * sgn(mem_[i])) * grad_[i];
+        }
+        grad_.zero();
+    }
+
     Volume val_;
     Volume grad_;
     Volume mem_;
@@ -342,7 +374,7 @@ class Layer {
    public:
     virtual Volume& forward(const Volume&) = 0;
     virtual Volume backward(const Volume& grad) = 0;
-    virtual void update(const Settings&) = 0;
+    virtual void update(const Settings&) {}
     virtual Dims out_shape() const = 0;
     virtual void set_train_mode(bool train) {}
 };
@@ -532,8 +564,8 @@ class FullyConn : public Layer {
     }
 
     virtual void update(const Settings& s) override {
-        w_.sgd(s);
-        b_.sgd(s);
+        w_.descend(s);
+        b_.descend(s);
     }
 
     void set_weights(std::vector<Volume>&& w, Volume b) {
@@ -796,8 +828,8 @@ class Conv : public Layer {
 
     virtual void update(const Settings& s) override {
         for (int i = 0; i < int(filters_.size()); ++i) {
-            filters_[i].sgd(s);
-            biases_[i].sgd(s);
+            filters_[i].descend(s);
+            biases_[i].descend(s);
         }
     }
 
@@ -824,6 +856,7 @@ class Net {
     void set_l2(float x) { settings_.l2 = x; }
     void set_lr_decay(float x) { settings_.lr_decay = x; }
     void set_grad_max(float x) { settings_.grad_max = x; }
+    void set_optimizer(Optimizer o) { settings_.optimizer = o; }
     void set_train_mode(bool train) {
         for (auto& l : layers_) {
             l->set_train_mode(train);
@@ -1092,6 +1125,7 @@ BOOST_PYTHON_MODULE(miniconv) {
         .def("set_epochs", &Net::set_epochs)
         .def("set_lr", &Net::set_lr)
         .def("set_lr_decay", &Net::set_lr_decay)
+        .def("set_optimizer", &Net::set_optimizer)
         .def("set_grad_max", &Net::set_grad_max)
         .def("set_train_mode", &Net::set_train_mode)
         .def("train",
@@ -1119,6 +1153,11 @@ BOOST_PYTHON_MODULE(miniconv) {
         .def_readwrite("epochs", &Settings::epochs)
         .def_readwrite("grad_max", &Settings::grad_max)
         .def_readwrite("batch_size", &Settings::batch_size);
+
+    enum_<Optimizer>("Optimizer")
+        .value("sgd", Optimizer::Sgd)
+        .value("sgdm", Optimizer::Sgdm)
+        .value("powersign", Optimizer::PowerSign);
 
     np::initialize();
     //    feenableexcept(FE_ALL_EXCEPT & ~FE_INEXACT);
