@@ -259,9 +259,18 @@ class Volume {
     int nonzero() const {
         int count = 0;
         for (int i = 1; i < sz_; ++i) {
-            count += res_[i] == 0 ? 1 : 0;
+            count += res_[i] == 0 ? 0 : 1;
         }
         return count;
+    }
+
+    float norm() const {
+        float len = 0;
+        for (int i = 0; i < sz_; ++i) {
+            len += res_[i] * res_[i];
+        }
+        len = std::sqrt(len + 1e-6);
+        return len;
     }
 
    private:
