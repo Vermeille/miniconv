@@ -37,7 +37,7 @@ struct Settings {
           batch_size(8),
           epochs(10),
           l2(0.0001),
-          grad_max(50),
+          grad_max(5),
           lr_decay(1) {}
 };
 
@@ -344,16 +344,23 @@ class Layer {
     virtual Volume backward(const Volume& grad) = 0;
     virtual void update(const Settings&) = 0;
     virtual Dims out_shape() const = 0;
+    virtual void set_train_mode(bool train) {}
 };
 
 class Verbose : public Layer {
    public:
-    Verbose(Dims d, std::string name) : out_shape_(d), name_(name) {}
+    Verbose(Dims d, std::string name)
+        : out_shape_(d), name_(name), train_(false) {}
 
     virtual Volume& forward(const Volume& x) override {
-        fwd_.emplace_back();
-        x.share_with(fwd_.back());
-        return fwd_.back();
+        if (train_) {
+            fwd_.emplace_back();
+            x.share_with(fwd_.back());
+            return fwd_.back();
+        } else {
+            x.share_with(test_thru_);
+            return test_thru_;
+        }
     }
 
     virtual Volume backward(const Volume& x) override {
@@ -420,12 +427,15 @@ class Verbose : public Layer {
     }
 
     virtual Dims out_shape() const override { return out_shape_; }
+    virtual void set_train_mode(bool b) override { train_ = b; }
 
    private:
     std::vector<Volume> fwd_;
     std::vector<Volume> bwd_;
     Dims out_shape_;
     std::string name_;
+    Volume test_thru_;
+    bool train_;
 };
 
 class Input : public Layer {
@@ -442,6 +452,7 @@ class Input : public Layer {
     }
     virtual void update(const Settings&) {}
     virtual Dims out_shape() const { return out_shape_; }
+    virtual void set_train_mode(bool train) override {}
 
    private:
     Dims out_shape_;
@@ -471,6 +482,7 @@ class Relu : public Layer {
     }
 
     virtual void update(const Settings&) override {}
+    virtual void set_train_mode(bool train) override {}
     virtual Dims out_shape() const { return out_shape_; }
 
    private:
@@ -557,6 +569,7 @@ class FullyConn : public Layer {
         return gs;
     }
 
+    virtual void set_train_mode(bool train) override {}
     virtual Dims out_shape() const override { return Dims{b_.h(), 1, 1}; }
 
    private:
@@ -611,6 +624,7 @@ class MaxPool : public Layer {
         return grad;
     }
 
+    virtual void set_train_mode(bool train) override {}
     virtual void update(const Settings&) override {}
 
     virtual Dims out_shape() const override { return out_shape_; }
@@ -650,6 +664,7 @@ class MSE : public Layer {
         return grad;
     }
 
+    virtual void set_train_mode(bool train) override {}
     virtual void update(const Settings&) override {}
     virtual Dims out_shape() const override { return Dims{1, 1, 1}; }
 
@@ -789,6 +804,7 @@ class Conv : public Layer {
     virtual Dims out_shape() const override {
         return Dims{in_sz_.w, in_sz_.h, kern_sz_.c};
     }
+    virtual void set_train_mode(bool train) override {}
 
    private:
     int nb_f_;
@@ -807,16 +823,23 @@ class Net {
     void set_epochs(int e) { settings_.epochs = e; }
     void set_l2(float x) { settings_.l2 = x; }
     void set_lr_decay(float x) { settings_.lr_decay = x; }
+    void set_grad_max(float x) { settings_.grad_max = x; }
+    void set_train_mode(bool train) {
+        for (auto& l : layers_) {
+            l->set_train_mode(train);
+        }
+    }
 
     void train(std::vector<Volume>&& xs, std::vector<Volume>&& ys) {
         xs_ = std::move(xs);
         ys_ = std::move(ys);
 
+        set_train_mode(true);
         std::vector<float> errs(xs_.size() / settings_.batch_size + 1);
         for (int e = 0; e < settings_.epochs; ++e) {
             settings_.lr *= settings_.lr_decay;
+            std::cout << "Epoch " << e << "\n";
             for (int i = 0; i < int(xs_.size()); i += settings_.batch_size) {
-                std::cout << "Epoch " << e << "\n";
                 errs.clear();
                 for (int j = i;
                      j < std::min(int(xs_.size()), i + settings_.batch_size);
@@ -872,6 +895,15 @@ class Net {
             std::make_unique<Verbose>(layers_.back()->out_shape(), name));
     }
 
+    const Volume predict(const Volume& x) {
+        set_train_mode(false);
+        Volume it;
+        x.share_with(it);
+        for (int i = 0; i < int(layers_.size()); ++i) {
+            layers_[i]->forward(it).share_with(it);
+        }
+        return std::move(it);
+    }
     const Volume& forward(const Volume& x) {
         Volume it;
         x.share_with(it);
@@ -1047,6 +1079,10 @@ BOOST_PYTHON_MODULE(miniconv) {
              +[](Net* net, np::ndarray arr) {
                  return to_array(net->forward(from_array(arr)));
              })
+        .def("predict",
+             +[](Net* net, np::ndarray arr) {
+                 return to_array(net->predict(from_array(arr)));
+             })
         .def("input", &Net::input)
         .def("maxpool", &Net::maxpool)
         .def("relu", &Net::relu)
@@ -1056,6 +1092,8 @@ BOOST_PYTHON_MODULE(miniconv) {
         .def("set_epochs", &Net::set_epochs)
         .def("set_lr", &Net::set_lr)
         .def("set_lr_decay", &Net::set_lr_decay)
+        .def("set_grad_max", &Net::set_grad_max)
+        .def("set_train_mode", &Net::set_train_mode)
         .def("train",
              +[](Net* net, p::list xs, p::list ys) {
                  std::vector<Volume> vxs;
