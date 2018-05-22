@@ -386,6 +386,31 @@ class Layer {
     virtual void set_train_mode(bool train) {}
 };
 
+class Tanh : public Layer {
+   public:
+    Tanh(Dims d) : out_shape_(d) {}
+
+    virtual Volume& forward(const Volume& input) {
+        res_ = input.from_shape();
+        for (int i = 0; i < res_.sz(); ++i) {
+            res_[i] = std::tanh(input[i]);
+        }
+        return res_;
+    }
+    virtual Volume backward(const Volume& pgrad) {
+        Volume grad = pgrad.from_shape();
+        for (int i = 0; i < res_.sz(); ++i) {
+            grad[i] = pgrad[i] * (1 - res_[i] * res_[i]);
+        }
+        return grad;
+    }
+    virtual Dims out_shape() const override { return out_shape_; }
+
+   private:
+    Volume res_;
+    Dims out_shape_;
+};
+
 class Verbose : public Layer {
    public:
     Verbose(Dims d, std::string name)
@@ -1028,6 +1053,11 @@ class Net {
             std::make_unique<BatchNorm>(layers_.back()->out_shape()));
     }
 
+    void tanh() {
+        layers_.emplace_back(
+            std::make_unique<Tanh>(layers_.back()->out_shape()));
+    }
+
     const Volume predict(const Volume& x) {
         set_train_mode(false);
         Volume it;
@@ -1220,6 +1250,7 @@ BOOST_PYTHON_MODULE(miniconv) {
         .def("maxpool", &Net::maxpool)
         .def("relu", &Net::relu)
         .def("verbose", &Net::verbose)
+        .def("tanh", &Net::tanh)
         .def("batch_norm", &Net::batch_norm)
         .def("set_batch_size", &Net::set_batch_size)
         .def("set_l2", &Net::set_l2)
