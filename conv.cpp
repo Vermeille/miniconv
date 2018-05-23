@@ -638,8 +638,6 @@ class Relu : public Layer {
         return std::move(grad);
     }
 
-    virtual void update(const Settings&) override {}
-    virtual void set_train_mode(bool train) override {}
     virtual Dims out_shape() const { return out_shape_; }
 
    private:
