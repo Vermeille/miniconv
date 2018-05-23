@@ -436,7 +436,7 @@ class Verbose : public Layer {
     }
 
     virtual void update(const Settings&) override {
-        float statsfwd[] = {0, 0, 0, 0, 0};
+        float statsfwd[] = {0, 0, 0, 0, 0, 0};
         for (auto& v : fwd_) {
             auto local = v.mean_std();
             statsfwd[0] += local.first;
@@ -444,8 +444,9 @@ class Verbose : public Layer {
             statsfwd[2] += v.max();
             statsfwd[3] += v.min();
             statsfwd[4] += float(v.nonzero()) / v.sz();
+            statsfwd[5] += v.norm();
         }
-        float statsbwd[] = {0, 0, 0, 0, 0};
+        float statsbwd[] = {0, 0, 0, 0, 0, 0};
         for (auto& v : bwd_) {
             auto local = v.mean_std();
             statsbwd[0] += local.first;
@@ -453,6 +454,7 @@ class Verbose : public Layer {
             statsbwd[2] += v.max();
             statsbwd[3] += v.min();
             statsbwd[4] += float(v.nonzero()) / v.sz();
+            statsbwd[5] += v.norm();
         }
 
         std::cout << "               Statistics for " << name_ << ":\n";
@@ -484,6 +486,9 @@ class Verbose : public Layer {
         std::cout << "    Non-Zero: " << std::setw(8)
                   << statsfwd[4] / fwd_.size()
                   << "                  Non-Zero: " << statsbwd[4] / fwd_.size()
+                  << "\n";
+        std::cout << "    Norm:     " << statsfwd[5] / fwd_.size()
+                  << "                  Norm: " << statsbwd[5] / bwd_.size()
                   << "\n";
 
         fwd_.clear();
