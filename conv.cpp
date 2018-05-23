@@ -32,11 +32,11 @@ struct Dims {
 };
 
 struct Settings {
-    int epochs;
     float lr;
+    int batch_size;
+    int epochs;
     float l2;
     float grad_max;
-    int batch_size;
     float lr_decay;
     Optimizer optimizer;
 
